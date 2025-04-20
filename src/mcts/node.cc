@@ -276,7 +276,7 @@ void LowNode::MakeNotTerminal(const Node* node) {
   if (node->GetNumEdges() > 0) {
     for (const auto& child : node->Edges()) {
       const auto n = child.GetN();
-      if (n > 0) {
+      if (n > 0 && child.node() != nullptr) { // Added null check for child.node()
         const float child_weight = child.GetWeight();
         n_ += n;
         weight_ += child_weight;
@@ -286,7 +286,7 @@ void LowNode::MakeNotTerminal(const Node* node) {
         d_ += child.GetD(0.0f) * child_weight;
         m_ += child.GetM(0.0f) * child_weight;
         vs_ += child.GetVS(0.0f) * child_weight;
-        e_ += child.node()->GetE() * child_weight; // Propagate uncertainty
+        e_ += child.node()->GetE() * child_weight; // Corrected: Access E via node()
       }
     }
 
