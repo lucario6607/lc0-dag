@@ -94,6 +94,11 @@ class Search {
   // Returns the search parameters.
   const SearchParams& GetParams() const { return params_; }
 
+  // Methods for Root Beam Search
+  void UpdateRootBeam(Node* root_node) REQUIRES(nodes_mutex_); // Added REQUIRES annotation
+  bool IsRootBeamActive() const REQUIRES_SHARED(nodes_mutex_) { return root_beam_active_; } // Read access needs shared lock
+  const std::vector<int>& GetRootBeamIndices() const REQUIRES_SHARED(nodes_mutex_) { return root_beam_indices_; } // Read access needs shared lock
+
   // If called after GetBestMove, another call to GetBestMove will have results
   // from temperature having been applied again.
   void ResetBestMove();
@@ -120,6 +125,13 @@ class Search {
   void SendUciInfo();  // Requires nodes_mutex_ to be held.
   // Sets stop to true and notifies watchdog thread.
   void FireStopInternal();
+
+  // --- Root Beam Search State ---
+  // Note: These are guarded by nodes_mutex_ as they are updated/read during search iteration
+  bool root_beam_active_ GUARDED_BY(nodes_mutex_) = false;
+  std::vector<int> root_beam_indices_ GUARDED_BY(nodes_mutex_);
+  // root_beam_width_ and root_beam_update_threshold_ are const members of params_, accessed via params_.Get...()
+  // --- END Root Beam Search State ---
 
   void SendMovesStats() const;
   // Function which runs in a separate thread and watches for time and
@@ -167,12 +179,13 @@ class Search {
   Node* root_node_;
   NNCache* cache_;
   NodeTree* dag_;
+  // Ensure params_ is initialized before accessing it (already correct order)
+  const SearchParams params_;
   SyzygyTablebase* syzygy_tb_;
   // Fixed positions which happened before the search.
   const PositionHistory& played_history_;
 
   Network* const network_;
-  const SearchParams params_;
   const MoveList searchmoves_;
   const std::chrono::steady_clock::time_point start_time_;
   int64_t initial_visits_;
