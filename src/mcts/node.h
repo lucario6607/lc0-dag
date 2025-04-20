@@ -308,7 +308,7 @@ class Node {
   float GetVS() const { return vs_; }
   float GetWeight() const { return weight_; }
   float GetTotalWeight() const { return weight_; }
-  float GetAvgWeight() const { return weight_ / n_; }
+  float GetAvgWeight() const { return n_ ? weight_ / n_ : 0.0f; } // Avoid divide by zero
   float GetE() const { return e_; }
   // return low node's v
   float GetV() const;
