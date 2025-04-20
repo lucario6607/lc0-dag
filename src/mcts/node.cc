@@ -1,4 +1,4 @@
-  /*
+ /*
   This file is part of Leela Chess Zero.
   Copyright (C) 2018 The LCZero Authors
 
@@ -39,6 +39,7 @@
 #include <sstream>
 #include <thread>
 #include <unordered_set>
+#include <iomanip> // Added for std::setprecision etc.
 
 #include "utils/exception.h"
 #include "utils/hashcat.h"
@@ -142,6 +143,8 @@ void Node::Trim(GCQueue* gc_queue) {
   m_ = 0.0f;
   vs_ = 0.0f;
   n_ = 0;
+  weight_ = 0.0; // Reset weight
+  e_ = 0.0f; // Reset uncertainty
   n_in_flight_ = 0;
 
   // edge_
@@ -205,6 +208,7 @@ std::string Node::DebugString() const {
       << " Index:" << index_ << " Move:" << GetMove().as_string()
       << " Sibling:" << sibling_.get() << " P:" << GetP() << " WL:" << wl_
       << " D:" << d_ << " M:" << m_ << " N:" << n_ << " N_:" << n_in_flight_
+      << " WGT:" << weight_ << " E:" << e_ // Added weight and E
       << " Term:" << static_cast<int>(terminal_type_)
       << " Bounds:" << static_cast<int>(lower_bound_) - 2 << ","
       << static_cast<int>(upper_bound_) - 2;
@@ -218,6 +222,7 @@ std::string LowNode::DebugString() const {
       << " NumEdges:" << static_cast<int>(num_edges_)
       << " Child:" << child_.get() << " WL:" << wl_ << " D:" << d_
       << " M:" << m_ << " N:" << n_ << " NP:" << num_parents_
+      << " WGT:" << weight_ << " E:" << e_ // Added weight and E
       << " Term:" << static_cast<int>(terminal_type_)
       << " Bounds:" << static_cast<int>(lower_bound_) - 2 << ","
       << static_cast<int>(upper_bound_) - 2
@@ -247,6 +252,7 @@ void LowNode::MakeTerminal(GameResult result, float plies_left, Terminal type) {
     d_ = 0.0f;
   }
   vs_ = wl_ * wl_;
+  e_ = 0.0f; // Terminal nodes have zero uncertainty
 
   assert(WLDMInvariantsHold());
 }
@@ -259,31 +265,39 @@ void LowNode::MakeNotTerminal(const Node* node) {
   lower_bound_ = GameResult::BLACK_WON;
   upper_bound_ = GameResult::WHITE_WON;
   n_ = 0;
+  weight_ = 0.0; // Reset weight
   wl_ = 0.0;
   d_ = 0.0;
   m_ = 0.0;
   vs_ = 0.0;
+  e_ = 0.0; // Reset uncertainty
 
   // Include children too.
   if (node->GetNumEdges() > 0) {
     for (const auto& child : node->Edges()) {
       const auto n = child.GetN();
       if (n > 0) {
+        const float child_weight = child.GetWeight();
         n_ += n;
+        weight_ += child_weight;
         // Flip Q for opponent.
         // Default values don't matter as n is > 0.
-        wl_ += child.GetWL(0.0f) * n;
-        d_ += child.GetD(0.0f) * n;
-        m_ += child.GetM(0.0f) * n;
-        vs_ += child.GetVS(0.0f) * n;
+        wl_ += child.GetWL(0.0f) * child_weight;
+        d_ += child.GetD(0.0f) * child_weight;
+        m_ += child.GetM(0.0f) * child_weight;
+        vs_ += child.GetVS(0.0f) * child_weight;
+        e_ += child.GetE() * child_weight; // Propagate uncertainty
       }
     }
 
     // Recompute with current eval (instead of network's) and children's eval.
-    wl_ /= n_;
-    d_ /= n_;
-    m_ /= n_;
-    vs_ /= n_;
+    if (weight_ > 0.0f) { // Avoid divide by zero
+      wl_ /= weight_;
+      d_ /= weight_;
+      m_ /= weight_;
+      vs_ /= weight_;
+      e_ /= weight_; // Average uncertainty
+    }
   }
 
   assert(WLDMInvariantsHold());
@@ -316,6 +330,7 @@ void Node::MakeTerminal(GameResult result, float plies_left, Terminal type) {
     SetP(0.0f);
   }
   vs_ = wl_ * wl_;
+  e_ = 0.0f; // Terminal nodes have zero uncertainty
 
   assert(WLDMInvariantsHold());
 }
@@ -336,18 +351,22 @@ void Node::MakeNotTerminal(bool also_low_node) {
     lower_bound_ = -upper_bound;
     upper_bound_ = -lower_bound;
     n_ = low_node_->GetN();
+    weight_ = low_node_->GetWeight(); // Restore weight
     wl_ = -low_node_->GetWL();
     d_ = low_node_->GetD();
     m_ = low_node_->GetM() + 1;
     vs_ = low_node_->GetVS();
+    e_ = low_node_->GetE(); // Restore uncertainty
   } else {  // Real terminal.
     lower_bound_ = GameResult::BLACK_WON;
     upper_bound_ = GameResult::WHITE_WON;
-    n_ = 0.0f;
+    n_ = 0;
+    weight_ = 0.0;
     wl_ = 0.0f;
     d_ = 0.0f;
     m_ = 0.0f;
     vs_ = 0.0f;
+    e_ = 0.0f;
   }
 
   assert(WLDMInvariantsHold());
@@ -395,10 +414,22 @@ void LowNode::FinalizeScoreUpdate(float v, float d, float m, float vs,
   }
 
   // Recompute Q.
-  wl_ += multiweight * (v - wl_) / (weight_ + multiweight);
-  d_ += multiweight * (d - d_) / (weight_ + multiweight);
-  m_ += multiweight * (m - m_) / (weight_ + multiweight);
-  vs_ += multiweight * (vs - vs_) / (weight_ + multiweight);
+  const double new_weight = weight_ + multiweight;
+  if (new_weight > 0.0) { // Avoid division by zero
+      wl_ += multiweight * (v - wl_) / new_weight;
+      d_ += multiweight * (d - d_) / new_weight;
+      m_ += multiweight * (m - m_) / new_weight;
+      vs_ += multiweight * (vs - vs_) / new_weight;
+      // Uncertainty (e) is set during SetNNEval, not updated here
+  } else {
+      // Handle case where weight was initially zero (shouldn't happen if multivisit > 0)
+      wl_ = v;
+      d_ = d;
+      m_ = m;
+      vs_ = vs;
+  }
+
+  assert(WLDMInvariantsHold());
 
   // Increment N.
   n_ += multivisit;
@@ -424,14 +455,19 @@ void LowNode::AdjustForTerminal(float v, float d, float m, float vs,
   assert(static_cast<uint32_t>(multivisit) <= n_);
 
 
+
   if (cht_entry_ != nullptr)
     cht_entry_->deltaSum -= (wl_ - v_) * GetCorrectionWeight(weight_);
 
   // Recompute Q.
-  wl_ += multiweight * v / weight_;
-  d_ += multiweight * d / weight_;
-  m_ += multiweight * m / weight_;
-  vs_ += multiweight * vs / weight_;
+  if (weight_ > 0.0) { // Avoid division by zero
+      wl_ += multiweight * v / weight_;
+      d_ += multiweight * d / weight_;
+      m_ += multiweight * m / weight_;
+      vs_ += multiweight * vs / weight_;
+      // Uncertainty (e) is not adjusted here, it reflects NN output
+  }
+
 
   if (cht_entry_ != nullptr)
     cht_entry_->deltaSum += (wl_ - v_) * GetCorrectionWeight(weight_);
@@ -446,14 +482,22 @@ void LowNode::AdjustForTerminal(float v, float d, float m, float vs,
 void Node::FinalizeScoreUpdate(float v, float d, float m, float vs,
                                uint32_t multivisit, float multiweight) {
 
-
-
-
+  const double new_weight = weight_ + multiweight;
   // Recompute Q.
-  wl_ += multiweight * (v - wl_) / (weight_ + multiweight);
-  d_ += multiweight * (d - d_) / (weight_ + multiweight);
-  m_ += multiweight * (m - m_) / (weight_ + multiweight);
-  vs_ += multiweight * (vs - vs_) / (weight_ + multiweight);
+  if (new_weight > 0.0) { // Avoid division by zero
+    wl_ += multiweight * (v - wl_) / new_weight;
+    d_ += multiweight * (d - d_) / new_weight;
+    m_ += multiweight * (m - m_) / new_weight;
+    vs_ += multiweight * (vs - vs_) / new_weight;
+    // Uncertainty (e) propagates from LowNode, not averaged here
+  } else {
+      wl_ = v;
+      d_ = d;
+      m_ = m;
+      vs_ = vs;
+      // e_ remains whatever it was (usually set by SetE via LowNode)
+  }
+
 
   assert(WLDMInvariantsHold());
 
@@ -471,10 +515,13 @@ void Node::AdjustForTerminal(float v, float d, float m, float vs,
   assert(static_cast<uint32_t>(multivisit) <= n_);
 
   // Recompute Q.
-  wl_ += multiweight * v / weight_;
-  d_ += multiweight * d / weight_;
-  m_ += multiweight * m / weight_;
-  vs_ += multiweight * vs / weight_;
+  if (weight_ > 0.0) { // Avoid division by zero
+    wl_ += multiweight * v / weight_;
+    d_ += multiweight * d / weight_;
+    m_ += multiweight * m / weight_;
+    vs_ += multiweight * vs / weight_;
+     // Uncertainty (e) is not adjusted here
+  }
 
 
   assert(WLDMInvariantsHold());
@@ -509,9 +556,14 @@ void LowNode::ReleaseChildrenExceptOne(Node* node_to_save, GCQueue* gc_queue) {
     }
   }
   // Kill all remaining siblings.
-  saved_node->GetSibling()->reset();
-  // Make saved node the only child. (kills previous siblings).
-  child_ = std::move(saved_node);
+  if (saved_node) { // Check if saved_node is not null
+      saved_node->GetSibling()->reset();
+      // Make saved node the only child. (kills previous siblings).
+      child_ = std::move(saved_node);
+  } else {
+      // If the node_to_save wasn't found (should not happen if called correctly), clear all children.
+      child_.reset();
+  }
 }
 
 void Node::ReleaseChildrenExceptOne(Node* node_to_save,
@@ -522,12 +574,18 @@ void Node::ReleaseChildrenExceptOne(Node* node_to_save,
 
 void Node::SetLowNode(LowNode* low_node) {
   assert(!low_node_);
-  low_node->AddParent();
-  low_node_ = low_node;
+  if (low_node) { // Check if low_node is not null
+      low_node->AddParent();
+      low_node_ = low_node;
+      // Propagate uncertainty from low_node
+      e_ = low_node->GetE();
+  }
 }
 void Node::UnsetLowNode() {
   if (low_node_) low_node_->RemoveParent();
   low_node_ = nullptr;
+  // Reset uncertainty when low node is removed
+  e_ = 0.0f;
 }
 
 static std::string PtrToNodeName(const void* ptr) {
@@ -554,6 +612,7 @@ std::string LowNode::DotNodeString() const {
       << "WL=" << wl_    //
       << std::noshowpos  //
       << "\\nD=" << d_ << "\\nM=" << m_ << "\\nN=" << n_
+      << "\\nWGT=" << weight_ << "\\nE=" << e_ // Added weight and E
       << "\\nNP=" << num_parents_
       << "\\nTerm=" << static_cast<int>(terminal_type_)  //
       << std::showpos                                    //
@@ -584,6 +643,7 @@ std::string Node::DotEdgeString(bool as_opponent, const LowNode* parent) const {
       << "\\nWL= " << wl_                             //
       << std::noshowpos                               //
       << "\\nD=" << d_ << "\\nM=" << m_ << "\\nN=" << n_
+      << "\\nWGT=" << weight_ << "\\nE=" << e_ // Added weight and E
       << "\\nN_=" << n_in_flight_
       << "\\nTerm=" << static_cast<int>(terminal_type_)  //
       << std::showpos                                    //
@@ -611,7 +671,7 @@ std::string Node::DotGraphString(bool as_opponent) const {
       << ",style=filled"  // Show tooltip everywhere on the node.
       << ",fillcolor=ivory"
       << "];" << std::endl;
-  oss << "ranksep=" << 4.0f * std::log10(GetN()) << std::endl;
+  oss << "ranksep=" << 4.0f * std::log10(std::max(1.0, (double)GetN())) << std::endl; // Use std::max to avoid log10(0)
 
   oss << DotEdgeString(!as_opponent) << std::endl;
   if (low_node_) {
@@ -631,7 +691,7 @@ std::string Node::DotGraphString(bool as_opponent) const {
       auto child = child_edge.node();
       if (child == nullptr) break;
 
-      oss << child->DotEdgeString(parent_as_opponent) << std::endl;
+      oss << child->DotEdgeString(parent_as_opponent, parent_low_node) << std::endl; // Pass parent_low_node
       auto child_low_node = child->GetLowNode();
       if (child_low_node != nullptr &&
           (seen.find(child_low_node) == seen.end())) {
@@ -796,9 +856,11 @@ void NodeTree::MakeMove(Move move) {
   // It can have TT parents, until they get garbage collected.
   if (current_head_->IsTT()) {
     auto tt_iter = tt_.find(current_head_->GetHash());
-    tt_iter->second->ClearTT();
-    non_tt_.emplace_back(std::move(tt_iter->second));
-    tt_.erase(tt_iter);
+    if (tt_iter != tt_.end()) { // Check if found before dereferencing
+        tt_iter->second->ClearTT();
+        non_tt_.emplace_back(std::move(tt_iter->second));
+        tt_.erase(tt_iter);
+    }
   }
 
   current_head_ = new_head;
