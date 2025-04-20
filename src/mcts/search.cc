@@ -1062,7 +1062,11 @@ EdgeAndNode Search::GetBestRootChildWithTemperature(float temperature) const {
         1 / temperature);
     cumulative_sums.push_back(sum);
   }
-  assert(sum > 0.0f); // Changed from assert(sum) to handle potential 0 sum if all moves filtered
+  // Check if sum is positive, handle case where all moves might be filtered
+  if (sum <= 0.0f) {
+      LOGFILE << "Warning: No valid moves found for temperature selection. Falling back.";
+      return GetBestChildNoTemperature(root_node_, 0); // Fallback
+  }
 
   const float toss = Random::Get().GetFloat(cumulative_sums.back());
   int idx =
@@ -1080,6 +1084,7 @@ EdgeAndNode Search::GetBestRootChildWithTemperature(float temperature) const {
     if (edge.GetQ(fpu, draw_score) < min_eval) continue;
     if (current_filtered_idx++ == idx) return edge;
   }
+
   // Should be unreachable if sum > 0
   LOGFILE << "Error: Temperature selection failed to find move.";
   // Fallback: return best child without temperature
@@ -1707,7 +1712,7 @@ void SearchWorker::PickNodesToExtend(int collision_limit) {
       SharedMutex::SharedLock read_lock(search_->nodes_mutex_);
       uint32_t root_n = search_->root_node_->GetN();
       bool needs_update = root_n >= (uint32_t)search_->params_.GetRootBeamUpdateThreshold();
-      read_lock.unlock(); // Release read lock before potentially acquiring write lock
+      read_lock.release(); // Explicitly release read lock before attempting write lock
 
       if (needs_update) {
           SharedMutex::WriteLock write_lock(search_->nodes_mutex_);
@@ -1716,7 +1721,7 @@ void SearchWorker::PickNodesToExtend(int collision_limit) {
               search_->root_node_->GetN() >= (uint32_t)search_->params_.GetRootBeamUpdateThreshold()) {
                search_->UpdateRootBeam(search_->root_node_);
           }
-          // Write lock released automatically
+          // Write lock released automatically by RAII
       }
   }
   // --- End Root Beam Search Modification ---
@@ -1850,7 +1855,7 @@ void SearchWorker::PickNodesToExtendTask(
   Node::Iterator best_edge;
   Node::Iterator second_best_edge;
   // Fetch the current best root node visits for possible smart pruning.
-  const int64_t best_node_n = search_->current_best_edge_.GetN();
+  // const int64_t best_node_n = search_->current_best_edge_.GetN(); // Removed as unused
 
   int passed_off = 0;
   int completed_visits = 0;
@@ -2039,7 +2044,7 @@ void SearchWorker::PickNodesToExtendTask(
                 }
 
                 float weightstarted = current_weightstarted[allowed_idx];
-                const float util = current_util[allowed_idx];
+                const float util = current_util[allowed_idx]; // Calculate util *before* policy boosting check
 
                 if (current_score[allowed_idx] < -1.0f) {
                      float p = cur_iters[allowed_idx].GetP();
@@ -2083,7 +2088,7 @@ void SearchWorker::PickNodesToExtendTask(
                    current_weightstarted[idx] = cur_iters[idx].GetWeightStarted();
                 }
                 float weightstarted = current_weightstarted[idx];
-                const float util = current_util[idx];
+                const float util = current_util[idx]; // Calculate util *before* policy boosting check
                 if (idx > cache_filled_idx) {
                    float p = cur_iters[idx].GetP();
                    p = ComputePolicyDecay(policy_decay_factor, p);
@@ -2099,7 +2104,7 @@ void SearchWorker::PickNodesToExtendTask(
 
                 // Apply root move filter
                 if (is_root_node && !root_move_filter.empty() &&
-                    std::find(root_move_filter.begin(), root_move_filter.end(),
+                    std::find(root_move_filter.begin(), root_move_filter_.end(),
                             cur_iters[idx].GetMove()) == root_move_filter.end()) {
                    continue;
                 }
@@ -2141,8 +2146,10 @@ void SearchWorker::PickNodesToExtendTask(
             best_p = ComputePolicyDecay(policy_decay_factor, best_p);
              if (best_p < 0.01f) best_p /= 3;
              if (visited[best_idx]) {
-                 if (util >= min_policy_boost_util_t1) best_p = std::max(best_p, policy_boost_t1);
-                 if (util >= min_policy_boost_util_t2) best_p = std::max(best_p, policy_boost_t2);
+                 // Recalculate util for best_idx here as it might not have been done above
+                 const float best_util = current_util[best_idx];
+                 if (best_util >= min_policy_boost_util_t1) best_p = std::max(best_p, policy_boost_t1);
+                 if (best_util >= min_policy_boost_util_t2) best_p = std::max(best_p, policy_boost_t2);
                  if (cur_iters[best_idx].GetWL(-999.0f) > -node->GetWL() && cur_iters[best_idx].GetWeight() < node->GetWeight() / 3) best_p *= 1.4;
              }
 
@@ -2189,6 +2196,8 @@ void SearchWorker::PickNodesToExtendTask(
            float p = cur_iters[best_idx].GetP();
            p = ComputePolicyDecay(policy_decay_factor, p);
            if (p < 0.01f) p /= 3;
+           // Need util calculation here as well before policy boosting check
+           const float util = current_util[best_idx];
            if (visited[best_idx]) {
                if (util >= min_policy_boost_util_t1) p = std::max(p, policy_boost_t1);
                if (util >= min_policy_boost_util_t2) p = std::max(p, policy_boost_t2);
@@ -2196,7 +2205,7 @@ void SearchWorker::PickNodesToExtendTask(
            }
           current_score[best_idx] = p * puct_mult /
                                         (1 + current_weightstarted[best_idx]) +
-                                    current_util[best_idx];
+                                    util; // Use calculated util
         }
         if (best_idx > vtp_last_filled.back() &&
             (*visits_to_perform.back())[best_idx] > 0) {
@@ -2638,9 +2647,7 @@ void SearchWorker::DoBackupUpdateSingleNode(
     ntp_cht_entry = nullptr;
   }
   float ch_lambda = params_.GetCorrectionHistoryLambda();
-  float ch_alpha = params_.GetCorrectionHistoryAlpha();
-
-
+  //float ch_alpha = params_.GetCorrectionHistoryAlpha(); // ch_alpha is unused
 
 
   // Update the low node at the start of the backup path first, but only visit
