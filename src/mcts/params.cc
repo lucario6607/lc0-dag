@@ -555,6 +555,15 @@ const OptionId SearchParams::kCorrectionHistoryAlphaId{
 const OptionId SearchParams::kCorrectionHistoryLambdaId{
     "correction-history-lambda", "CorrectionHistoryLambda",
     "Strength of correction history adjustment. [0,1]"};
+
+// --- Root Beam Search ADDED ---
+const OptionId SearchParams::kRootBeamWidthId{
+    "root-beam-width", "RootBeamWidth",
+    "If > 0, restricts search to the top N most visited root moves after an initial threshold. 0 disables."};
+const OptionId SearchParams::kRootBeamUpdateThresholdId{
+    "root-beam-update-threshold", "RootBeamUpdateThreshold",
+    "Number of root visits after which the root beam is calculated and activated."};
+// --- END Root Beam Search ADDED ---
 	
 
 void SearchParams::Populate(OptionsParser* options) {
@@ -698,6 +707,11 @@ void SearchParams::Populate(OptionsParser* options) {
   options->Add<FloatOption>(kCorrectionHistoryAlphaId, 0, 1) = 1;
   options->Add<FloatOption>(kCorrectionHistoryLambdaId, 0, 1) = 0.3;
 
+  // --- Root Beam Search ADDED ---
+  options->Add<IntOption>(kRootBeamWidthId, 0, 500) = 0; // Disabled by default
+  options->Add<IntOption>(kRootBeamUpdateThresholdId, 0, 1000000) = 100;
+  // --- END Root Beam Search ADDED ---
+
 
 	
 
@@ -727,6 +741,10 @@ void SearchParams::Populate(OptionsParser* options) {
   options->HideOption(kWDLContemptAttenuationId);
   options->HideOption(kWDLDrawRateTargetId);
   options->HideOption(kWDLBookExitBiasId);
+  // --- Root Beam Search ADDED ---
+  options->HideOption(kRootBeamWidthId); // Typically hidden unless debugging/tuning
+  options->HideOption(kRootBeamUpdateThresholdId); // Typically hidden
+  // --- END Root Beam Search ADDED ---
 }
 
 SearchParams::SearchParams(const OptionsDict& options)
@@ -864,6 +882,11 @@ SearchParams::SearchParams(const OptionsDict& options)
       kCorrectionHistoryLambda(options.Get<float>(kCorrectionHistoryLambdaId)),
       kPolicyDecayExponent(options.Get<float>(kPolicyDecayExponentId)),
       kPolicyDecayFactor(options.Get<float>(kPolicyDecayFactorId)),
+
+      // --- Root Beam Search ADDED ---
+      kRootBeamWidth(options.Get<int>(kRootBeamWidthId)),
+      kRootBeamUpdateThreshold(options.Get<int>(kRootBeamUpdateThresholdId)),
+      // --- END Root Beam Search ADDED ---
 
 
       kEasyEvalWeightDecay(options.Get<float>(kEasyEvalWeightDecayId)),
