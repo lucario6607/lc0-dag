@@ -230,6 +230,11 @@ class SearchParams {
   float GetCorrectionHistoryAlpha() const { return kCorrectionHistoryAlpha; }
   float GetCorrectionHistoryLambda() const { return kCorrectionHistoryLambda; }
 
+  // --- Root Beam Search ADDED ---
+  int GetRootBeamWidth() const { return kRootBeamWidth; }
+  int GetRootBeamUpdateThreshold() const { return kRootBeamUpdateThreshold; }
+  // --- END Root Beam Search ADDED ---
+
 
   // Search parameter IDs.
   static const OptionId kMiniBatchSizeId;
@@ -348,6 +353,11 @@ class SearchParams {
   static const OptionId kCorrectionHistoryAlphaId;
   static const OptionId kCorrectionHistoryLambdaId;
 
+  // --- Root Beam Search ADDED ---
+  static const OptionId kRootBeamWidthId;
+  static const OptionId kRootBeamUpdateThresholdId;
+  // --- END Root Beam Search ADDED ---
+
 
 
  private:
@@ -449,6 +459,11 @@ class SearchParams {
   const bool kUseCorrectionHistory;
   const float kCorrectionHistoryAlpha;
   const float kCorrectionHistoryLambda;
+
+  // --- Root Beam Search ADDED ---
+  const int kRootBeamWidth;
+  const int kRootBeamUpdateThreshold;
+  // --- END Root Beam Search ADDED ---
 
 
 };
