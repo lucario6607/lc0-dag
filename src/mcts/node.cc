@@ -286,7 +286,7 @@ void LowNode::MakeNotTerminal(const Node* node) {
         d_ += child.GetD(0.0f) * child_weight;
         m_ += child.GetM(0.0f) * child_weight;
         vs_ += child.GetVS(0.0f) * child_weight;
-        e_ += child.GetE() * child_weight; // Propagate uncertainty
+        e_ += child.node()->GetE() * child_weight; // Propagate uncertainty
       }
     }
 
