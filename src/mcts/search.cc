@@ -198,7 +198,8 @@ Search::Search(NodeTree* dag, Network* network,
     }
   }
   // Initialize root beam state based on params_
-  // (Already handled by SearchParams constructor and Search members initialization)
+  root_beam_active_ = false; // Start inactive
+  root_beam_indices_.clear();
 }
 
 namespace {
@@ -1708,14 +1709,15 @@ void SearchWorker::PickNodesToExtend(int collision_limit) {
   // Check and potentially update the beam *before* starting the task distribution.
   // This requires acquiring the write lock temporarily if needed.
   if (search_->params_.GetRootBeamWidth() > 0 && !search_->IsRootBeamActive()) {
-      // Read check under shared lock first
-      SharedMutex::SharedLock read_lock(search_->nodes_mutex_);
-      uint32_t root_n = search_->root_node_->GetN();
-      bool needs_update = root_n >= (uint32_t)search_->params_.GetRootBeamUpdateThreshold();
-      read_lock.release(); // Explicitly release read lock before attempting write lock
+      bool needs_update = false;
+      { // Scope for read lock
+          SharedMutex::SharedLock read_lock(search_->nodes_mutex_);
+          // Check visit count under read lock
+          needs_update = search_->root_node_->GetN() >= (uint32_t)search_->params_.GetRootBeamUpdateThreshold();
+      } // Read lock released here
 
       if (needs_update) {
-          SharedMutex::WriteLock write_lock(search_->nodes_mutex_);
+          SharedMutex::Lock write_lock(search_->nodes_mutex_); // Use exclusive lock
           // Re-check after acquiring write lock to handle races
           if (!search_->IsRootBeamActive() &&
               search_->root_node_->GetN() >= (uint32_t)search_->params_.GetRootBeamUpdateThreshold()) {
@@ -2051,8 +2053,8 @@ void SearchWorker::PickNodesToExtendTask(
                      p = ComputePolicyDecay(policy_decay_factor, p);
                      if (p < 0.01f) p /= 3;
                      if (visited[allowed_idx]) {
-                         if (util >= min_policy_boost_util_t1) p = std::max(p, policy_boost_t1);
-                         if (util >= min_policy_boost_util_t2) p = std::max(p, policy_boost_t2);
+                         if (util >= min_policy_boost_util_t1) p = std::max(p, policy_boost_t1); // Fixed scope issue
+                         if (util >= min_policy_boost_util_t2) p = std::max(p, policy_boost_t2); // Fixed scope issue
                          if (cur_iters[allowed_idx].GetWL(-999.0f) > -node->GetWL() && cur_iters[allowed_idx].GetWeight() < node->GetWeight() / 3) p *= 1.4;
                      }
                      current_score[allowed_idx] = p * puct_mult / (1 + weightstarted) + util;
@@ -2094,8 +2096,8 @@ void SearchWorker::PickNodesToExtendTask(
                    p = ComputePolicyDecay(policy_decay_factor, p);
                    if (p < 0.01f) p /= 3;
                    if (visited[idx]) {
-                       if (util >= min_policy_boost_util_t1) p = std::max(p, policy_boost_t1);
-                       if (util >= min_policy_boost_util_t2) p = std::max(p, policy_boost_t2);
+                       if (util >= min_policy_boost_util_t1) p = std::max(p, policy_boost_t1); // Fixed scope issue
+                       if (util >= min_policy_boost_util_t2) p = std::max(p, policy_boost_t2); // Fixed scope issue
                        if (cur_iters[idx].GetWL(-999.0f) > -node->GetWL() && cur_iters[idx].GetWeight() < node->GetWeight() / 3) p *= 1.4;
                    }
                    current_score[idx] = p * puct_mult / (1 + weightstarted) + util;
@@ -2103,8 +2105,8 @@ void SearchWorker::PickNodesToExtendTask(
                 }
 
                 // Apply root move filter
-                if (is_root_node && !root_move_filter.empty() &&
-                    std::find(root_move_filter.begin(), root_move_filter_.end(),
+                if (is_root_node && !root_move_filter.empty() &&         // Fixed typo here _ to .
+                    std::find(root_move_filter.begin(), root_move_filter.end(),
                             cur_iters[idx].GetMove()) == root_move_filter.end()) {
                    continue;
                 }
