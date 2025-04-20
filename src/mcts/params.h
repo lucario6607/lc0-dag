@@ -60,66 +60,7 @@ class SearchParams {
     return at_root ? kCpuctBaseAtRoot : kCpuctBase;
   }
   float GetCpuctExponent(bool at_root) const {
-    return at_root ? kCpu : kFpuValue;
-  }
-  int GetCacheHistoryLength() const { return kCacheHistoryLength; }
-  float GetPolicySoftmaxTemp() const { return kPolicySoftmaxTemp; }
-  int GetMaxCollisionEvents() const { return kMaxCollisionEvents; }
-  int GetMaxCollisionVisits() const { return kMaxCollisionVisits; }
-  bool GetOutOfOrderEval() const { return kOutOfOrderEval; }
-  bool GetStickyEndgames() const { return kStickyEndgames; }
-  bool GetSyzygyFastPlay() const { return kSyzygyFastPlay; }
-  int GetMultiPv() const { return options_.Get<int>(kMultiPvId); }
-  bool GetPerPvCounters() const { return options_.Get<bool>(kPerPvCountersId); }
-  std::string GetScoreType() const {
-    return options_.Get<std::string>(kScoreTypeId);
-  }
-  FillEmptyHistory GetHistoryFill() const { return kHistoryFill; }
-  float GetMovesLeftMaxEffect() const { return kMovesLeftMaxEffect; }
-  float GetMovesLeftThreshold() const { return kMovesLeftThreshold; }
-  float GetMovesLeftSlope() const { return kMovesLeftSlope; }
-  float GetMovesLeftConstantFactor() const { return kMovesLeftConstantFactor; }
-  float GetMovesLeftScaledFactor() const { return kMovesLeftScaledFactor; }
-  float GetMovesLeftQuadraticFactor() const {
-    return kMovesLeftQuadraticFactor;
-  }
-  bool GetDisplayCacheUsage() const { return kDisplayCacheUsage; }
-  int GetMaxConcurrentSearchers() const { return kMaxConcurrentSearchers; }
-  float GetDrawScore() const { return kDrawScore; }
-  ContemptMode GetContemptMode() const {
-    std::string mode = options_.Get<std::string>(kContemptModeId);
-    if (mode == "play") return ContemptMode::PLAY;
-    if (mode == "white_side_analysis") return ContemptMode::WHITE;
-    if (mode == "black_side_analysis") return ContemptMode::BLACK;
-    assert(mode == "disable");
-    return ContemptMode::NONE;
-  }
-  float GetWDLRescaleRatio() const { return kWDLRescaleParams.ratio; }
-  float GetWDLRescaleDiff() const { return kWDLRescaleParams.diff; }
-  float GetWDLEvalObjectivity() const { return kWDLEvalObjectivity; }
-  uint32_t GetMaxOutOfOrderEvals() const { return kMaxOutOfOrderEvals; }
-  float GetNpsLimit() const { return kNpsLimit; }
-
-  int GetTaskWorkersPerSearchWorker() const {
-    return kTaskWorkersPerSearchWorker;
-  }
-  int GetMinimumWorkSizeForProcessing() const {
-    return kMinimumWorkSizeForProcessing;
-  }
-  int GetMinimumWorkSizeForPicking() const {
-    return kMinimumWorkSizeForPicking;
-  }
-  int GetMinimumRemainingWorkSizeForPicking() const {
-    return kMinimumRemainingWorkSizeForPicking;
-  }
-  int GetMinimumWorkPerTaskForProcessing() const {
-    return kMinimumWorkPerTaskForProcessing;
-  }
-  int GetIdlingMinimumWork() const { return kIdlingMinimumWork; }
-  int GetThreadIdlingThreshold() const { return kThreadIdlingThreshold; }
-  int GetMaxCollisionVisitsScalingStart() const {
-    return kMaxCollisionVisitsScalingStart;
-  }ctExponentAtRoot : kCpuctExponent;
+    return at_root ? kCpuctExponentAtRoot : kCpuctExponent;
   }
   float GetCpuctFactor(bool at_root) const {
     return at_root ? kCpuctFactorAtRoot : kCpuctFactor;
@@ -216,36 +157,20 @@ class SearchParams {
   float GetMaxCollisionVisitsScalingPower() const {
     return kMaxCollisionVisitsScalingPower;
   }
-  
-  int GetMaxCollisionVisitsScalingEnd() const {
-    return kMaxCollisionVisitsScalingEnd;
-  }
-  float GetMaxCollisionVisitsScalingPower() const {
-    return kMaxCollisionVisitsScalingPower;
-  }
   float GetCpuctUtilityStdevPrior() const { return kCpuctUtilityStdevPrior; }
   float GetCpuctUtilityStdevScale() const { return kCpuctUtilityStdevScale; }
   float GetCpuctUtilityStdevPriorWeight() const {
     return kCpuctUtilityStdevPriorWeight;
   }
 
-
-
   float GetCpuctUncertaintyMinFactor() const { return kCpuctUncertaintyMinFactor; }
-
   float GetCpuctUncertaintyMaxFactor() const { return kCpuctUncertaintyMaxFactor; }
-
   float GetCpuctUncertaintyMinUncertainty() const { return kCpuctUncertaintyMinUncertainty; }
-
 	float GetCpuctUncertaintyMaxUncertainty() const {
     return kCpuctUncertaintyMaxUncertainty;
   }
-
   bool GetUseCpuctUncertainty() const { return kUseCpuctUncertainty; }
-
 	bool GetJustFpuUncertainty() const { return kJustFpuUncertainty; }
-
-
 
   bool GetUseVarianceScaling() const { return kUseVarianceScaling; }
   bool GetMoveRuleBucketing() const { return kMoveRuleBucketing; }
@@ -275,22 +200,13 @@ class SearchParams {
   float GetPolicyDecayExponent() const { return kPolicyDecayExponent; }
   float GetPolicyDecayFactor() const { return kPolicyDecayFactor; }
 
-	
-
 	float GetTopPolicyBoost() const { return kTopPolicyBoost; }
-
   int GetTopPolicyNumBoost() const { return kTopPolicyNumBoost; }
-
   float GetTopPolicyTierTwoBoost() const { return kTopPolicyTierTwoBoost; }
-
   int GetTopPolicyTierTwoNumBoost() const { return kTopPolicyTierTwoNumBoost; }
-
   bool GetUsePolicyBoosting() const { return kUsePolicyBoosting; }
 
-
   bool GetSearchSpinBackoff() const { return kSearchSpinBackoff; }
-
- 
 
   bool GetUseCorrectionHistory() const { return kUseCorrectionHistory; }
   float GetCorrectionHistoryAlpha() const { return kCorrectionHistoryAlpha; }
@@ -300,7 +216,6 @@ class SearchParams {
   int GetRootBeamWidth() const { return kRootBeamWidth; }
   int GetRootBeamUpdateThreshold() const { return kRootBeamUpdateThreshold; }
   // --- END Root Beam Search ADDED ---
-
 
   // Search parameter IDs.
   static const OptionId kMiniBatchSizeId;
@@ -336,52 +251,7 @@ class SearchParams {
   static const OptionId kOutOfOrderEvalId;
   static const OptionId kStickyEndgamesId;
   static const OptionId kSyzygyFastPlayId;
-  static const OptionId kMultiPvId;float GetCpuctUtilityStdevPrior() const { return kCpuctUtilityStdevPrior; }
-  float GetCpuctUtilityStdevScale() const { return kCpuctUtilityStdevScale; }
-  float GetCpuctUtilityStdevPriorWeight() const {
-    return kCpuctUtilityStdevPriorWeight;
-  }
-
-
-
-  float GetCpuctUncertaintyMinFactor() const { return kCpuctUncertaintyMinFactor; }
-
-  float GetCpuctUncertaintyMaxFactor() const { return kCpuctUncertaintyMaxFactor; }
-
-  float GetCpuctUncertaintyMinUncertainty() const { return kCpuctUncertaintyMinUncertainty; }
-
-	float GetCpuctUncertaintyMaxUncertainty() const {
-    return kCpuctUncertaintyMaxUncertainty;
-  }
-
-  bool GetUseCpuctUncertainty() const { return kUseCpuctUncertainty; }
-
-	bool GetJustFpuUncertainty() const { return kJustFpuUncertainty; }
-
-
-
-  bool GetUseVarianceScaling() const { return kUseVarianceScaling; }
-  bool GetMoveRuleBucketing() const { return kMoveRuleBucketing; }
-  std::string GetReportedNodes() const {
-    return options_.Get<std::string>(kReportedNodesId);
-  }
-  float GetUncertaintyWeightingCap() const {
-		return kUncertaintyWeightingCap;
-	}
-  float GetUncertaintyWeightingCoefficient() const {
-    return kUncertaintyWeightingCoefficient;
-  }
-  float GetUncertaintyWeightingExponent() const {
-    return kUncertaintyWeightingExponent;
-  }
-  bool GetUseUncertaintyWeighting() const { return kUseUncertaintyWeighting; }
-  float GetEasyEvalWeightDecay() const {
-    return kEasyEvalWeightDecay;
-  }
-
-  float GetDesperationMultiplier() const { return kDesperationMultiplier; }
-  float GetDesperationLow() const { return kDesperationLow; }
-  float Get
+  static const OptionId kMultiPvId;
   static const OptionId kPerPvCountersId;
   static const OptionId kScoreTypeId;
   static const OptionId kHistoryFillId;
@@ -408,43 +278,7 @@ class SearchParams {
   static const OptionId kTaskWorkersPerSearchWorkerId;
   static const OptionId kMinimumWorkSizeForProcessingId;
   static const OptionId kMinimumWorkSizeForPickingId;
-  static const OptionId kMinimumRemainingWorkSizeForPickingDesperationHigh() const { return kDesperationHigh; }
-  float GetDesperationPriorWeight() const { return kDesperationPriorWeight; }
-  bool GetUseDesperation() const { return kUseDesperation;  }
-
-  float GetPolicyDecayExponent() const { return kPolicyDecayExponent; }
-  float GetPolicyDecayFactor() const { return kPolicyDecayFactor; }
-
-	
-
-	float GetTopPolicyBoost() const { return kTopPolicyBoost; }
-
-  int GetTopPolicyNumBoost() const { return kTopPolicyNumBoost; }
-
-  float GetTopPolicyTierTwoBoost() const { return kTopPolicyTierTwoBoost; }
-
-  int GetTopPolicyTierTwoNumBoost() const { return kTopPolicyTierTwoNumBoost; }
-
-  bool GetUsePolicyBoosting() const { return kUsePolicyBoosting; }
-
-
-  bool GetSearchSpinBackoff() const { return kSearchSpinBackoff; }
-
- 
-
-  bool GetUseCorrectionHistory() const { return kUseCorrectionHistory; }
-  float GetCorrectionHistoryAlpha() const { return kCorrectionHistoryAlpha; }
-  float GetCorrectionHistoryLambda() const { return kCorrectionHistoryLambda; }
-
-  // --- Root Beam Search ADDED ---
-  int GetRootBeamWidth() const { return kRootBeamWidth; }
-  int GetRootBeamUpdateThreshold() const { return kRootBeamUpdateThreshold; }
-  // --- END Root Beam Search ADDED ---
-
-
-  // Search parameter IDs.
-  static const OptionId kMiniBatchSizeId;
-  static const OptionId kCpuctId;
+  static const OptionId kMinimumRemainingWorkSizeForPickingId;
   static const OptionId kMinimumWorkPerTaskForProcessingId;
   static const OptionId kIdlingMinimumWorkId;
   static const OptionId kThreadIdlingThresholdId;
@@ -453,308 +287,134 @@ class SearchParams {
   static const OptionId kMaxCollisionVisitsScalingPowerId;
   static const OptionId kUCIOpponentId;
   static const OptionId kUCIRatingAdvId;
-  static const OptionId kCpuctUtilityStdevPriorIdId;
-  static const OptionId kCpuctAtRootId;
-  static const OptionId kCpuctExponentId;
-  static const OptionId kCpuctExponentAtRootId;
-  static const OptionId kCpuctBaseId;
-  static const OptionId kCpuctBaseAtRootId;
-  static const OptionId kCpuctFactorId;
-  static const OptionId kCpuctFactorAtRootId;
-  static const OptionId kRootHasOwnCpuctParamsId;
-  static const OptionId kTwoFoldDrawsId;
-  static const OptionId kTemperatureId;
-  static const OptionId kTempDecayMovesId;
-  static const OptionId kTempDecayDelayMovesId;
-  ;
+  static const OptionId kCpuctUtilityStdevPriorId;
   static const OptionId kCpuctUtilityStdevScaleId;
   static const OptionId kCpuctUtilityStdevPriorWeightId;
-
-
   static const OptionId kUseVarianceScalingId;
   static const OptionId kMoveRuleBucketingId;
   static const OptionId kReportedNodesId;
-  static const OptionId kUncertaintyWeightstatic const OptionId kTemperatureCutoffMoveId;
-  static const OptionId kTemperatureEndgameId;
-  static const OptionId kTemperatureWinpctCutoffId;
-  static const OptionId kTemperatureVisitOffsetId;
-  static const OptionId kNoiseEpsilonId;
-  static const OptionId kNoiseAlphaId;
-  static const OptionId kVerboseingCapId;
+  static const OptionId kUncertaintyWeightingCapId;
   static const OptionId kUncertaintyWeightingCoefficientId;
   static const OptionId kUncertaintyWeightingExponentId;
-  static const OptionId kUseUncertaintyWeightingIdStatsId;
-  static const OptionId kLogLiveStatsId;
-  static const OptionId kFpuStrategyId;
-  static const Option;
+  static const OptionId kUseUncertaintyWeightingId;
   static const OptionId kEasyEvalWeightDecayId;
   static const OptionId kSearchSpinBackoffId;
-
-  static constId kFpuValueId;
-  static const OptionId kFpuStrategyAtRootId;
-  static const OptionId kFpuValueAtRootId OptionId kPolicyDecayExponentId;
-  static const OptionId kPolicyDecayFactorId;
-
-
-  static const OptionId kCpuctUncertaintyMinFactorId;
-  static const OptionId kCpuctUncertainty;
-  static const OptionId kCacheHistoryLengthId;
-  static const OptionId kPolicySoftmaxTempId;
-  static const OptionIdMaxFactorId;
-  static const OptionId kCpuctUncertaintyMinUncertaintyId;
-  static const OptionId kCpuctUn kMaxCollisionEventsId;
-  static const OptionId kMaxCollisionVisitsId;
-  static const OptionId kOutOfOrderEvalId;
-certaintyMaxUncertaintyId;
-  static const OptionId kUseCpuctUncertaintyId;
-  static const OptionId kJustF  static const OptionId kStickyEndgamesId;
-  static const OptionId kSyzygyFastPlayId;
-  static const OptionId kMultiPvId;
-  static const OptionId kPerPvCountersId;puUncertaintyId;
-
-
-  static const OptionId kDesperationMultiplierId;
-  static const OptionId kScoreTypeId;
-  static const OptionId
-  static const OptionId kDesperationLowId;
-  static const kHistoryFillId;
-  static const OptionId kMovesLeftMaxEffectId;
-  static const OptionId kMovesLeftThresholdId;
-   OptionId kDesperationHighId;
-  static const OptionId kDesperationPriorWeightId;
-  static const OptionId kUseDesperationIdstatic const OptionId kMovesLeftConstantFactorId;
-  static const Option;
-
-
-
-  static const OptionId kTopPolicyBoostId;
-  static const OptionId kMovesLeftScaledFactorId;
-  static const OptionId kMovesLeftQuadraticFactorId;
-  static const OptionId kMovesLeftSlopeId kTopPolicyNumBoostId;
-  static const OptionId kTopId;
-  static const OptionId kDisplayCacheUsageId;
-  PolicyTierTwoBoostId;
-  static const OptionId kTopPolicyTierTwoNumBoostId;
-  static const OptionId kUsePolicyBoostingIdstatic const OptionId kMaxConcurrentSearchersId;
-  static const OptionId kDrawScoreId;
-  static const OptionId kContemptMode;
-
-
-
-  static const OptionId kUseCorrectionHistoryId;
-  static const OptionId kCorrectionHistoryAlphaId;
-  static const OptionId kCorrectionHistoryLambdaId;Id;
-  static const OptionId kContemptId;
-  static
-
-  // --- Root Beam Search ADDED ---
-  static const OptionId const OptionId kContemptMaxValueId;
-  static const OptionId kW kRootBeamWidthId;
-  static const OptionId kRootBeamUpdateDLCalibrationEloId;
-  static const OptionId kWDLContemptAttenuationThresholdId;
-  // --- END Root Beam Search ADDED ---
-
-
-
- private:Id;
-  static const OptionId kWDLEvalObjectivityId;
-  static const OptionId kWDLDrawRateTargetId;
-  static
-  const OptionsDict& options_;
-  // Cached parameter values. Values const OptionId kWDLDrawRateReferenceId;
-  static const OptionId have to be cached if either:
-  // 1. Parameter is accessed kWDLBookExitBiasId;
-  static const OptionId kMaxOutOfOrderEvalsId;
-  static const OptionId kNpsLimitId; often and has to be cached for performance
-  // reasons.
-  // 
-  static const OptionId kTaskWorkersPerSearchWorkerId;
-  static const OptionId kMinimumWorkSizeForProcessingId;
-  static const2. Parameter has to stay the same during the search.
-  // TODO OptionId kMinimumWorkSizeForPickingId;
-  static const OptionId(crem) Some of those parameters can be converted to be dynamic after
-  //             kMinimumRemainingWorkSizeForPickingId;
-  static const OptionId kMinimumWorkPerTaskForProcessingId;
-  static const OptionId kIdtrivial search optimizations.
-  const float kCpuct;
-  const float kCpuctAtRoot;
-  const float kCpuctExponent;
-  const float kCpuctExponentAtRoot;
-  const float kCpulingMinimumWorkId;
-  static const OptionId kThreadIdlingThresholdId;
-  static const OptionId kMaxCollisionVisitsScalingStartIdctBase;
-  const float kCpuctBaseAtRoot;
-  ;
-  static const OptionId kMaxCollisionVisitsScalingEndId;const float kCpuctFactor;
-  const float kCpuctFactorAtRoot;
-  const bool kTwoFoldDraws;
-  const float
-  static const OptionId kMaxCollisionVisitsScalingPowerId;
- kNoiseEpsilon;
-  const float kNoiseAlpha;
-  const  static const OptionId kUCIOpponentId;
-  static const OptionId kUCIRatingAdvId;
-  static const OptionId k bool kFpuAbsolute;
-  const float kFpuValue;
-CpuctUtilityStdevPriorId;
-  static const OptionId kCpu  const bool kFpuAbsoluteAtRoot;
-  const float kFctUtilityStdevScaleId;
-  static const OptionId kCpuctpuValueAtRoot;
-  const int kCacheHistoryLength;
-  UtilityStdevPriorWeightId;
-
-
-  static const OptionId kUseVarianceconst float kPolicySoftmaxTemp;
-  const int kMaxCollisionEvents;
-  const int kMaxCollisionVisits;
-  const bool kOutOfOrderEval;
-  const bool kStickyEndgames;
-  constScalingId;
-  static const OptionId kMoveRuleBucketingId;
-  static const OptionId kReportedNodesId;
-  static const bool kSyzygyFastPlay;
-  const FillEmptyHistory kHistoryFill;
- OptionId kUncertaintyWeightingCapId;
-  static const Option  const int kMiniBatchSize;
-  const float kMovesLeftMaxEffect;
-  const float kMovesLeftThreshold;
-  const float kId kUncertaintyWeightingCoefficientId;
-  static const OptionId kUncertaintyWeightingExponentId;
-  static const OptionId kMovesLeftSlope;
-  const float kMovesLeftConstantFactor;
-  UseUncertaintyWeightingId;
-  static const OptionId kEasyconst float kMovesLeftScaledFactor;
-  const float kMovesLeftQuadrEvalWeightDecayId;
-  static const OptionId kSearchSpinBackaticFactor;
-  const bool kDisplayCacheUsage;
-  const intoffId;
-
   static const OptionId kPolicyDecayExponentId;
   static const OptionId kPolicyDecayFactorId;
-
-
-  static kMaxConcurrentSearchers;
-  const float kDrawScore;
-   const OptionId kCpuctUncertaintyMinFactorId;
+  static const OptionId kCpuctUncertaintyMinFactorId;
   static const OptionId kCpuctUncertaintyMaxFactorId;
-  staticconst float kContempt;
-  const WDLRescaleParams kWDL const OptionId kCpuctUncertaintyMinUncertaintyId;
-RescaleParams;
-  const float kWDLEvalObjectivity;
-  const int kMaxOutOfOrderEvals;
-  const float kNps  static const OptionId kCpuctUncertaintyMaxUncertaintyIdLimit;
-  const int kTaskWorkersPerSearchWorker;
-  const;
-  static const OptionId kUseCpuctUncertaintyId; int kMinimumWorkSizeForProcessing;
-  const int kMinimumWorkSizeForPicking;
-  const int kMinimumRemainingWorkSizeForPicking;
-  const int kMinimumWorkPerTaskForProcessing;
-  const int kIdlingMinimum
+  static const OptionId kCpuctUncertaintyMinUncertaintyId;
+  static const OptionId kCpuctUncertaintyMaxUncertaintyId;
+  static const OptionId kUseCpuctUncertaintyId;
   static const OptionId kJustFpuUncertaintyId;
-
-
   static const OptionId kDesperationMultiplierId;
   static const OptionId kDesperationLowId;
   static const OptionId kDesperationHighId;
-  static const OptionId kDesperationPriorWeightId;Work;
-  const int kThreadIdlingThreshold;
-  const int kMaxCollisionVisitsScalingStart;
-  const int kMaxCollisionVisitsScalingEnd;
-  const float kMaxCollisionVisitsScalingPower;
-  const float kCpuctUtilityStdevPrior;
-  const float
+  static const OptionId kDesperationPriorWeightId;
   static const OptionId kUseDesperationId;
-
-
-
-  static const kCpuctUtilityStdevScale;
-  const float kCpuctUtility OptionId kTopPolicyBoostId;
+  static const OptionId kTopPolicyBoostId;
   static const OptionId kTopPolicyNumBoostId;
-  static const OptionId kTopPolicyTierTwoStdevPriorWeight;
-
-  const bool kUseVarianceScaling;
-  const bool kMoveRuleBucketing;
-  const float kUncertaintyWeightingBoostId;
-  static const OptionId kTopPolicyTierTwoNumBoostCap;
-  const float kUncertaintyWeightingCoefficient;
-  const float kUncertaintyWeightingExponent;
-  const bool kUseUncertaintyWeighting;
-  const float kEasyEvalWeightDecayId;
+  static const OptionId kTopPolicyTierTwoBoostId;
+  static const OptionId kTopPolicyTierTwoNumBoostId;
   static const OptionId kUsePolicyBoostingId;
-
-
-
   static const OptionId kUseCorrectionHistoryId;
   static const OptionId kCorrectionHistoryAlphaId;
-  static const OptionId kCorrectionHistoryLambdaId;;
-  const bool kSearchSpinBackoff;
-
-
-  const float kCpuctUncertaintyMinFactor;
-  const float kCpuctUn
-
+  static const OptionId kCorrectionHistoryLambdaId;
   // --- Root Beam Search ADDED ---
   static const OptionId kRootBeamWidthId;
   static const OptionId kRootBeamUpdateThresholdId;
   // --- END Root Beam Search ADDED ---
 
-
-
- privatecertaintyMaxFactor;
-  const float kCpuctUncertaintyMinUncertainty;
-  const float kCpuctUncertaintyMaxUncertainty;
-  const bool kUseCpuctUncertainty;
-  const bool kJustFpuUncertainty;
-
-
-	const float k:
+ private:
   const OptionsDict& options_;
   // Cached parameter values. Values have to be cached if either:
-  // 1. Parameter is accessed often and has to be cached for performance
-  // reasons.
+  // 1. Parameter is accessed often and has to be cached for performance reasons.
   // 2. Parameter has to stay the same during the search.
-  // TODOTopPolicyBoost;
-  const int kTopPolicyNumBoost;
-  const float kTopPolicyTierTwoBoost;
-  const int kTopPolicy(crem) Some of those parameters can be converted to be dynamic after
-  //            trivial search optimizations.
+  // TODO(crem) Some of those parameters can be converted to be dynamic after trivial search optimizations.
   const float kCpuct;
-  const floatTierTwoNumBoost;
-  const bool kUsePolicyBoosting;
-
-  const float k kCpuctAtRoot;
+  const float kCpuctAtRoot;
   const float kCpuctExponent;
-PolicyDecayExponent;
-  const float kPolicyDecayFactor;
-
-
-  const float kDesperationMultiplier;
-  const float kDesperationLow  const float kCpuctExponentAtRoot;
+  const float kCpuctExponentAtRoot;
   const float kCpuctBase;
   const float kCpuctBaseAtRoot;
   const float kCpuctFactor;
-  const float kCpuctFactorAt;
-  const float kDesperationHigh;
-  const float kDesperationPriorWeight;
-  const bool kUseDesperation;
-
-  
-
-  const bool kUseCorrectionHistory;
-  const float kCorrectionHistoryAlphaRoot;
+  const float kCpuctFactorAtRoot;
   const bool kTwoFoldDraws;
   const float kNoiseEpsilon;
   const float kNoiseAlpha;
   const bool kFpuAbsolute;
   const float kFpuValue;
-;
+  const bool kFpuAbsoluteAtRoot;
+  const float kFpuValueAtRoot;
+  const int kCacheHistoryLength;
+  const float kPolicySoftmaxTemp;
+  const int kMaxCollisionEvents;
+  const int kMaxCollisionVisits;
+  const bool kOutOfOrderEval;
+  const bool kStickyEndgames;
+  const bool kSyzygyFastPlay;
+  const FillEmptyHistory kHistoryFill;
+  const int kMiniBatchSize;
+  const float kMovesLeftMaxEffect;
+  const float kMovesLeftThreshold;
+  const float kMovesLeftSlope;
+  const float kMovesLeftConstantFactor;
+  const float kMovesLeftScaledFactor;
+  const float kMovesLeftQuadraticFactor;
+  const bool kDisplayCacheUsage;
+  const int kMaxConcurrentSearchers;
+  const float kDrawScore;
+  const float kContempt;
+  const WDLRescaleParams kWDLRescaleParams;
+  const float kWDLEvalObjectivity;
+  const int kMaxOutOfOrderEvals;
+  const float kNpsLimit;
+  const int kTaskWorkersPerSearchWorker;
+  const int kMinimumWorkSizeForProcessing;
+  const int kMinimumWorkSizeForPicking;
+  const int kMinimumRemainingWorkSizeForPicking;
+  const int kMinimumWorkPerTaskForProcessing;
+  const int kIdlingMinimumWork;
+  const int kThreadIdlingThreshold;
+  const int kMaxCollisionVisitsScalingStart;
+  const int kMaxCollisionVisitsScalingEnd;
+  const float kMaxCollisionVisitsScalingPower;
+  const float kCpuctUtilityStdevPrior;
+  const float kCpuctUtilityStdevScale;
+  const float kCpuctUtilityStdevPriorWeight;
+  const bool kUseVarianceScaling;
+  const bool kMoveRuleBucketing;
+  const float kUncertaintyWeightingCap;
+  const float kUncertaintyWeightingCoefficient;
+  const float kUncertaintyWeightingExponent;
+  const bool kUseUncertaintyWeighting;
+  const float kEasyEvalWeightDecay;
+  const bool kSearchSpinBackoff;
+  const float kCpuctUncertaintyMinFactor;
+  const float kCpuctUncertaintyMaxFactor;
+  const float kCpuctUncertaintyMinUncertainty;
+  const float kCpuctUncertaintyMaxUncertainty;
+  const bool kUseCpuctUncertainty;
+  const bool kJustFpuUncertainty;
+	const float kTopPolicyBoost;
+  const int kTopPolicyNumBoost;
+  const float kTopPolicyTierTwoBoost;
+  const int kTopPolicyTierTwoNumBoost;
+  const bool kUsePolicyBoosting;
+  const float kPolicyDecayExponent;
+  const float kPolicyDecayFactor;
+  const float kDesperationMultiplier;
+  const float kDesperationLow;
+  const float kDesperationHigh;
+  const float kDesperationPriorWeight;
+  const bool kUseDesperation;
+  const bool kUseCorrectionHistory;
+  const float kCorrectionHistoryAlpha;
   const float kCorrectionHistoryLambda;
-
   // --- Root Beam Search ADDED ---
   const int kRootBeamWidth;
   const int kRootBeamUpdateThreshold;
   // --- END Root Beam Search ADDED ---
-
 
 };
 
