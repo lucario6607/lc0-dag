@@ -741,10 +741,10 @@ void SearchParams::Populate(OptionsParser* options) {
   options->HideOption(kWDLContemptAttenuationId);
   options->HideOption(kWDLDrawRateTargetId);
   options->HideOption(kWDLBookExitBiasId);
-  // --- Root Beam Search ADDED ---
-  options->HideOption(kRootBeamWidthId); // Typically hidden unless debugging/tuning
-  options->HideOption(kRootBeamUpdateThresholdId); // Typically hidden
-  // --- END Root Beam Search ADDED ---
+  // --- Root Beam Search - UNCOMMENT/REMOVE HideOption TO MAKE VISIBLE IN UCI ---
+  // options->HideOption(kRootBeamWidthId);
+  // options->HideOption(kRootBeamUpdateThresholdId);
+  // --- END Root Beam Search ---
 }
 
 SearchParams::SearchParams(const OptionsDict& options)
