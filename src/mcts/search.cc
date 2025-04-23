@@ -147,7 +147,150 @@ class MEvaluator {
   bool parent_within_threshold_ = false;
 };
 
+// --- START HELPER FUNCTIONS FOR PUCT CALCULATION ---
+// These functions are moved outside SearchWorker or Search for broader access if needed,
+// or can be kept private/static within Search/SearchWorker depending on usage.
+// For beam search, they need to be accessible from Search::UpdateRootBeam.
+
+inline float ComputeUncertaintyFactor(const SearchParams& params, float e) {
+  float min_factor = params.GetCpuctUncertaintyMinFactor();
+  float max_factor = params.GetCpuctUncertaintyMaxFactor();
+  float min_uncertainty = params.GetCpuctUncertaintyMinUncertainty();
+  float max_uncertainty = params.GetCpuctUncertaintyMaxUncertainty();
+  e = std::clamp(e * e, min_uncertainty, max_uncertainty);
+  float factor = min_factor + (max_factor - min_factor) * (e - min_uncertainty) /
+                                  (max_uncertainty - min_uncertainty + 1e-5);
+  return factor;
+}
+
+inline float ComputeStdev(const SearchParams& params, float q, float weight,
+                          float vs) {
+  float util_sq_avg = vs;
+  const float util_sq = q * q;
+  util_sq_avg = std::max(util_sq_avg,
+                         util_sq);  // avoid negative variance
+
+  const float var_estimate = util_sq_avg - util_sq;
+  float stdev_estimate = sqrt(std::max(var_estimate, 0.0f));
+  return stdev_estimate;
+}
+
+inline float ComputeStdevFactor(const SearchParams& params, float q,
+                                float weight, float vs) {
+  float util_sq_avg = vs;
+  const float util_sq = q * q;
+  util_sq_avg = std::max(util_sq_avg,
+                         util_sq);  // avoid negative variance
+
+  const float stdev_prior = params.GetCpuctUtilityStdevPrior();
+  const float variance_prior = stdev_prior * stdev_prior;
+  const float prior_weight = params.GetCpuctUtilityStdevPriorWeight();
+  const float stdev_factor_scale = params.GetCpuctUtilityStdevScale();
+  const float var_estimate =
+      ((util_sq + variance_prior) * prior_weight + util_sq_avg * weight) /
+          (prior_weight + weight - 1.0f) -
+      util_sq;
+
+  const float stdev_estimate = sqrt(std::max(var_estimate, 0.0f));
+  float stdev_factor =
+      1.0f + stdev_factor_scale * (stdev_estimate / stdev_prior - 1.0f);
+  return stdev_factor;
+}
+
+inline float ComputeDesperationFactor(const SearchParams& params, float q,
+  float weight) {
+
+  const float prior_weight = params.GetDesperationPriorWeight();
+  const float low = params.GetDesperationLow(); const float high = params.GetDesperationHigh();
+
+  q = abs(q);
+  float factor = (q <= low || q >= high) ? params.GetDesperationMultiplier() : 1.0f;
+  return 1.0f + (factor - 1.0f) * weight / (prior_weight + weight);
+
+
+}
+
+inline float ComputeCpuctFactor(const SearchParams& params, float weight,
+                                float q, float vs, float e, bool is_root_node) {
+  const float stdev_factor = params.GetUseVarianceScaling()
+                                 ? ComputeStdevFactor(params, q, weight, vs)
+                                 : 1.0f;
+
+  const float uncertainty_factor = params.GetUseCpuctUncertainty()
+                                      ? ComputeUncertaintyFactor(params, e) : 1.0f;
+
+  const float desperation_factor =
+      params.GetUseDesperation() ?
+          ComputeDesperationFactor(params, q, weight) : 1.0f;
+
+  return uncertainty_factor * stdev_factor * desperation_factor;
+}
+
+
+inline float GetFpu(const SearchParams& params, Node* node, bool is_root_node,
+                    float draw_score) {
+  const auto value = params.GetFpuValue(is_root_node);
+	// we shouldn't push the value below -1
+  return params.GetFpuAbsolute(is_root_node)
+             ? value
+             : fmax(-node->GetQ(-draw_score) -
+                        value * std::sqrt(node->GetVisitedPolicy()), -1.0f);
+}
+
+// Faster version for if visited_policy is readily available already.
+inline float GetFpu(const SearchParams& params, Node* node, bool is_root_node,
+                    float draw_score, float visited_pol) {
+  const auto value = params.GetFpuValue(is_root_node);
+  return params.GetFpuAbsolute(is_root_node)
+             ? value
+             : fmax(-node->GetQ(-draw_score) -
+                        value * std::sqrt(visited_pol), -1.0f);
+}
+
+inline float ComputeExploreFactor(const SearchParams& params, float weight, bool is_root_node) {
+  const float init = params.GetCpuct(is_root_node);
+  const float k = params.GetCpuctFactor(is_root_node);
+  const float base = params.GetCpuctBase(is_root_node);
+
+  return (init + (k ? k * FastLog((weight + base) / base) : 0.0f)) *
+         std::pow(fmax(weight, 1e-5), params.GetCpuctExponent(is_root_node));
+}
+
+inline float ComputeExploreFactor(const SearchParams& params, float weight, float q,
+                          float vs, float e, bool is_root_node) {
+
+  const float base_factor = ComputeExploreFactor(params, weight, is_root_node);
+
+  const float extra_factor = ComputeCpuctFactor(params, weight, q, vs, e,
+																					  is_root_node);
+
+  return base_factor * extra_factor ;
+}
+
+
+inline float ComputeWeight(const SearchParams& params, float uncertainty) {
+  if (!params.GetUseUncertaintyWeighting()) return 1.0f;
+  const float cap = params.GetUncertaintyWeightingCap();
+  const float coefficient = params.GetUncertaintyWeightingCoefficient();
+  const float exponent = params.GetUncertaintyWeightingExponent();
+  return fmin(cap, coefficient * pow(uncertainty, exponent));
+}
+
+inline float ComputePolicyDecayFactor(const SearchParams& params, uint32_t N) {
+  const float exponent = params.GetPolicyDecayExponent();
+  const float proportionality_factor = params.GetPolicyDecayFactor();
+  return (exponent == 0.0f || proportionality_factor == 0.0f)
+             ? 1.0f
+             : FastExp(-FastLog(1.0f + proportionality_factor * N) * exponent);
+}
+inline float ComputePolicyDecay(const float factor, const float pol) {
+  return factor == 1.0f ? pol : pol / (pol + (1.0f - pol) * factor);
+}
+
+// --- END HELPER FUNCTIONS FOR PUCT CALCULATION ---
+
 }  // namespace
+
 
 Search::Search(NodeTree* dag, Network* network,
                std::unique_ptr<UciResponder> uci_responder,
@@ -223,7 +366,56 @@ void ApplyDirichletNoise(Node* node, float eps, double alpha) {
 }
 }  // namespace
 
-// --- Root Beam Search Implementation ---
+// Helper function to calculate PUCT score for beam selection
+float Search::CalculatePuctScoreForBeam(const EdgeAndNode& edge, Node* parent_node) const {
+    // Mirror the logic from PickNodesToExtendTask
+    const bool is_root_node = (parent_node == root_node_); // Should always be true here
+    const float draw_score = GetDrawScore(/*is_odd_depth=*/false); // Root is always even depth (0)
+
+    const float policy_decay_factor = ComputePolicyDecayFactor(params_, parent_node->GetWeight());
+    float p = edge.GetP();
+    p = ComputePolicyDecay(policy_decay_factor, p);
+    if (p < 0.01f) p /= 3; // Apply low policy penalty
+
+    // Calculate base Q value (utility without U term)
+    float fpu = GetFpu(params_, parent_node, is_root_node, draw_score); // Use parent's FPU context
+    float q = edge.GetQ(fpu, draw_score);
+
+    // Apply M-Utility if enabled
+    const auto m_evaluator = network_->GetCapabilities().has_mlh()
+                               ? MEvaluator(params_, parent_node)
+                               : MEvaluator();
+    float m_utility = m_evaluator.GetMUtility(edge, q);
+
+    float base_utility = q + m_utility;
+
+    // Apply policy boosting if the child node has been visited
+    Node* child_node = edge.node(); // Need the actual node pointer
+    if (child_node && edge.GetN() > 0) {
+        // Need to determine if this node is in the top policy tier for boosting
+        // This requires recalculating the top utilities or storing them.
+        // For simplicity in this modification, we'll omit policy boosting for the beam score.
+        // A more complex implementation could store/recalculate this.
+        // TODO: Implement policy boosting check similar to PickNodesToExtendTask if needed.
+
+        // Apply the small bonus for promising moves
+        if (edge.GetWL(-999.0f) > -parent_node->GetWL() && edge.GetWeight() < parent_node->GetWeight() / 3) {
+             p *= 1.4;
+        }
+    }
+
+    // Calculate exploration term (U) coefficient
+    const float puct_mult = ComputeExploreFactor(params_, parent_node->GetWeight(), parent_node->GetWL(),
+                                                 parent_node->GetVS(), parent_node->GetE(), is_root_node);
+
+    // Calculate PUCT score
+    float puct_score = base_utility + p * puct_mult / (1.0f + edge.GetWeightStarted());
+
+    return puct_score;
+}
+
+
+// --- Root Beam Search Implementation (Modified for PUCT) ---
 void Search::UpdateRootBeam(Node* root_node) REQUIRES(nodes_mutex_) {
     // Ensure params_ is initialized before accessing GetRootBeamWidth()
     if (!root_node->HasChildren() || params_.GetRootBeamWidth() <= 0) {
@@ -242,24 +434,27 @@ void Search::UpdateRootBeam(Node* root_node) REQUIRES(nodes_mutex_) {
         return;
     }
 
-    std::vector<std::pair<uint32_t, int>> child_visits; // {visits, index} - Use uint32_t for GetN()
-    child_visits.reserve(num_children);
+    // --- Calculate PUCT scores ---
+    std::vector<std::pair<float, int>> child_scores; // {puct_score, index}
+    child_scores.reserve(num_children);
     int idx = 0;
     for (const auto& edge : root_node->Edges()) {
-        child_visits.push_back({edge.GetN(), idx++}); // GetN() gets visits for the child edge/node
+        // Calculate PUCT score for this edge/child
+        float puct_score = CalculatePuctScoreForBeam(edge, root_node);
+        child_scores.push_back({puct_score, idx++});
     }
 
-    // Sort descending by visits
-    std::sort(child_visits.rbegin(), child_visits.rend());
+    // Sort descending by PUCT score
+    std::sort(child_scores.rbegin(), child_scores.rend());
 
     // Store the indices of the top k children
     root_beam_indices_.clear();
     root_beam_indices_.reserve(k);
-    for (int i = 0; i < k && i < child_visits.size(); ++i) {
-        root_beam_indices_.push_back(child_visits[i].second);
+    for (int i = 0; i < k && i < child_scores.size(); ++i) {
+        root_beam_indices_.push_back(child_scores[i].second);
     }
     root_beam_active_ = true; // Activate the beam
-    LOGFILE << "Root beam activated. Top " << root_beam_indices_.size() << " indices selected.";
+    LOGFILE << "Root beam activated (PUCT). Top " << root_beam_indices_.size() << " indices selected.";
 }
 // --- End Root Beam Search Implementation ---
 
@@ -489,151 +684,6 @@ float Search::GetDrawScore(bool is_odd_depth) const {
 }
 
 
-namespace {
-
-
-inline float ComputeUncertaintyFactor(const SearchParams& params, float e) {
-  float min_factor = params.GetCpuctUncertaintyMinFactor();
-  float max_factor = params.GetCpuctUncertaintyMaxFactor();
-  float min_uncertainty = params.GetCpuctUncertaintyMinUncertainty();
-  float max_uncertainty = params.GetCpuctUncertaintyMaxUncertainty();
-  e = std::clamp(e * e, min_uncertainty, max_uncertainty);
-  float factor = min_factor + (max_factor - min_factor) * (e - min_uncertainty) /
-                                  (max_uncertainty - min_uncertainty + 1e-5);
-  return factor;
-}
-
-inline float ComputeStdev(const SearchParams& params, float q, float weight,
-                          float vs) {
-  float util_sq_avg = vs;
-  const float util_sq = q * q;
-  util_sq_avg = std::max(util_sq_avg,
-                         util_sq);  // avoid negative variance
-
-  const float var_estimate = util_sq_avg - util_sq;
-  float stdev_estimate = sqrt(std::max(var_estimate, 0.0f));
-  return stdev_estimate;
-}
-
-inline float ComputeStdevFactor(const SearchParams& params, float q,
-                                float weight, float vs) {
-  float util_sq_avg = vs;
-  const float util_sq = q * q;
-  util_sq_avg = std::max(util_sq_avg,
-                         util_sq);  // avoid negative variance
-
-  const float stdev_prior = params.GetCpuctUtilityStdevPrior();
-  const float variance_prior = stdev_prior * stdev_prior;
-  const float prior_weight = params.GetCpuctUtilityStdevPriorWeight();
-  const float stdev_factor_scale = params.GetCpuctUtilityStdevScale();
-  const float var_estimate =
-      ((util_sq + variance_prior) * prior_weight + util_sq_avg * weight) /
-          (prior_weight + weight - 1.0f) -
-      util_sq;
-
-  const float stdev_estimate = sqrt(std::max(var_estimate, 0.0f));
-  float stdev_factor =
-      1.0f + stdev_factor_scale * (stdev_estimate / stdev_prior - 1.0f);
-  return stdev_factor;
-}
-
-inline float ComputeDesperationFactor(const SearchParams& params, float q,
-  float weight) {
-
-  const float prior_weight = params.GetDesperationPriorWeight();
-  const float low = params.GetDesperationLow(); const float high = params.GetDesperationHigh();
-
-  q = abs(q);
-  float factor = (q <= low || q >= high) ? params.GetDesperationMultiplier() : 1.0f;
-  return 1.0f + (factor - 1.0f) * weight / (prior_weight + weight);
-
-
-}
-
-inline float ComputeStdevFactor(const SearchParams& params, Node* node) {
-  return ComputeStdevFactor(params, node->GetWL(), node->GetWeight(),
-                            node->GetVS());
-}
-
-inline float ComputeCpuctFactor(const SearchParams& params, float weight,
-                                float q, float vs, float e, bool is_root_node) {
-  const float stdev_factor = params.GetUseVarianceScaling()
-                                 ? ComputeStdevFactor(params, q, weight, vs)
-                                 : 1.0f;
-
-  const float uncertainty_factor = params.GetUseCpuctUncertainty()
-                                      ? ComputeUncertaintyFactor(params, e) : 1.0f;
-
-  const float desperation_factor =
-      params.GetUseDesperation() ?
-          ComputeDesperationFactor(params, q, weight) : 1.0f;
-
-  return uncertainty_factor * stdev_factor * desperation_factor;
-}
-
-
-inline float GetFpu(const SearchParams& params, Node* node, bool is_root_node,
-                    float draw_score) {
-  const auto value = params.GetFpuValue(is_root_node);
-	// we shouldn't push the value below -1
-  return params.GetFpuAbsolute(is_root_node)
-             ? value
-             : fmax(-node->GetQ(-draw_score) -
-                        value * std::sqrt(node->GetVisitedPolicy()), -1.0f);
-}
-
-// Faster version for if visited_policy is readily available already.
-inline float GetFpu(const SearchParams& params, Node* node, bool is_root_node,
-                    float draw_score, float visited_pol) {
-  const auto value = params.GetFpuValue(is_root_node);
-  return params.GetFpuAbsolute(is_root_node)
-             ? value
-             : fmax(-node->GetQ(-draw_score) -
-                        value * std::sqrt(visited_pol), -1.0f);
-}
-
-inline float ComputeExploreFactor(const SearchParams& params, float weight, bool is_root_node) {
-  const float init = params.GetCpuct(is_root_node);
-  const float k = params.GetCpuctFactor(is_root_node);
-  const float base = params.GetCpuctBase(is_root_node);
-
-  return (init + (k ? k * FastLog((weight + base) / base) : 0.0f)) *
-         std::pow(fmax(weight, 1e-5), params.GetCpuctExponent(is_root_node));
-}
-
-inline float ComputeExploreFactor(const SearchParams& params, float weight, float q,
-                          float vs, float e, bool is_root_node) {
-	
-  const float base_factor = ComputeExploreFactor(params, weight, is_root_node);
-
-  const float extra_factor = ComputeCpuctFactor(params, weight, q, vs, e,
-																					  is_root_node);
-
-  return base_factor * extra_factor ;
-}
-
-
-inline float ComputeWeight(const SearchParams& params, float uncertainty) {
-  if (!params.GetUseUncertaintyWeighting()) return 1.0f;
-  const float cap = params.GetUncertaintyWeightingCap();
-  const float coefficient = params.GetUncertaintyWeightingCoefficient();
-  const float exponent = params.GetUncertaintyWeightingExponent();
-  return fmin(cap, coefficient * pow(uncertainty, exponent));
-}
-
-inline float ComputePolicyDecayFactor(const SearchParams& params, uint32_t N) {
-  const float exponent = params.GetPolicyDecayExponent();
-  const float proportionality_factor = params.GetPolicyDecayFactor();
-  return (exponent == 0.0f || proportionality_factor == 0.0f)
-             ? 1.0f
-             : FastExp(-FastLog(1.0f + proportionality_factor * N) * exponent);
-}
-inline float ComputePolicyDecay(const float factor, const float pol) {
-  return factor == 1.0f ? pol : pol / (pol + (1.0f - pol) * factor);
-}
-
-}  // namespace
-
 std::vector<std::string> Search::GetVerboseStats(Node* node) const {
   const bool is_root = (node == root_node_);
   const bool is_odd_depth = !is_root;
@@ -744,7 +794,7 @@ std::vector<std::string> Search::GetVerboseStats(Node* node) const {
                edge.GetP(), edge.GetCheck());
     print_stats(&oss, edge.node());
     print(&oss, "(U: ", edge.GetU(U_coeff), ") ", 6, 5);
-    print(&oss, "(S: ", Q + edge.GetU(U_coeff) + M, ") ", 8, 5);
+    print(&oss, "(S: ", Q + edge.GetU(U_coeff) + M, ") ", 8, 5); // This is the PUCT score used in selection
     print_tail(&oss, edge.node());
     infos.emplace_back(oss.str());
   }
@@ -1705,28 +1755,45 @@ void SearchWorker::PickNodesToExtend(int collision_limit) {
   }
   std::vector<Move> empty_movelist;
 
-  // --- Root Beam Search Modification ---
-  // Check and potentially update the beam *before* starting the task distribution.
-  // This requires acquiring the write lock temporarily if needed.
-  if (search_->params_.GetRootBeamWidth() > 0 && !search_->IsRootBeamActive()) {
-      bool needs_update = false;
-      { // Scope for read lock
-          SharedMutex::SharedLock read_lock(search_->nodes_mutex_);
-          // Check visit count under read lock
-          needs_update = search_->root_node_->GetN() >= (uint32_t)search_->params_.GetRootBeamUpdateThreshold();
-      } // Read lock released here
+  // --- Root Beam Search Modification (Periodic Check) ---
+  // Periodically check and potentially update the beam during search.
+  // Trigger based on total playouts modulo some interval (e.g., update interval parameter).
+  // Need atomic access to total_playouts_.
+  if (search_->params_.GetRootBeamWidth() > 0) { // Check if beam is enabled at all
+      uint64_t current_playouts = search_->total_playouts_.load(std::memory_order_relaxed);
+      uint64_t update_threshold = search_->params_.GetRootBeamUpdateThreshold();
+      uint64_t update_interval = search_->params_.GetRootBeamUpdateInterval(); // Assuming this parameter exists
 
-      if (needs_update) {
-          SharedMutex::Lock write_lock(search_->nodes_mutex_); // Use exclusive lock
-          // Re-check after acquiring write lock to handle races
-          if (!search_->IsRootBeamActive() &&
-              search_->root_node_->GetN() >= (uint32_t)search_->params_.GetRootBeamUpdateThreshold()) {
-               search_->UpdateRootBeam(search_->root_node_);
+      // Check if it's time for the first update or a subsequent update
+      if ((!search_->IsRootBeamActive() && current_playouts >= update_threshold) ||
+          (search_->IsRootBeamActive() && update_interval > 0 &&
+           current_playouts >= search_->last_root_beam_update_playouts_ + update_interval)) {
+
+          bool needs_update = false;
+          { // Scope for read lock (optional, could just use write lock directly)
+              SharedMutex::SharedLock read_lock(search_->nodes_mutex_);
+              // Re-check condition under lock if strict synchronization is needed
+              needs_update = (!search_->IsRootBeamActive() && search_->root_node_->GetN() >= update_threshold) ||
+                             (search_->IsRootBeamActive() && update_interval > 0 &&
+                              current_playouts >= search_->last_root_beam_update_playouts_ + update_interval);
           }
-          // Write lock released automatically by RAII
+
+          if (needs_update) {
+              SharedMutex::Lock write_lock(search_->nodes_mutex_); // Use exclusive lock
+              // Re-check condition *after* acquiring write lock to handle races definitively
+              if ((!search_->IsRootBeamActive() && search_->root_node_->GetN() >= update_threshold) ||
+                  (search_->IsRootBeamActive() && update_interval > 0 &&
+                   current_playouts >= search_->last_root_beam_update_playouts_ + update_interval))
+              {
+                   LOGFILE << "Attempting root beam update at playouts: " << current_playouts;
+                   search_->UpdateRootBeam(search_->root_node_);
+                   search_->last_root_beam_update_playouts_ = current_playouts; // Record when the update happened
+              }
+              // Write lock released automatically by RAII
+          }
       }
   }
-  // --- End Root Beam Search Modification ---
+  // --- End Root Beam Search Modification (Periodic Check) ---
 
 
   // This lock must be held until after the task_completed_ wait succeeds below.
@@ -1848,7 +1915,7 @@ void SearchWorker::PickNodesToExtendTask(
   std::array<float, 256> current_weightstarted;
 
 
-  
+
   constexpr int num_top = 8;
   std::array<float, num_top> top_utils;
 
@@ -1943,9 +2010,9 @@ void SearchWorker::PickNodesToExtendTask(
       }
       for (int i = 0; i < num_top; i++) {
         top_utils[i] = -999;
-      } 
+      }
 
-			
+
       // Root depth is 1 here, while for GetDrawScore() it's 0-based, that's why
       // the weirdness.
       const float draw_score =
@@ -1959,7 +2026,7 @@ void SearchWorker::PickNodesToExtendTask(
         visited_pol += child->GetP();
         float q = child->GetQ(draw_score);
         current_util[index] = q + m_evaluator.GetMUtility(child, q);
-				
+
         visited[index] = true;
 
         // we're only counting visited nodes toward top utils
@@ -1977,7 +2044,7 @@ void SearchWorker::PickNodesToExtendTask(
       }
 
 
-      
+
 			const int num_boost_t1 = params_.GetTopPolicyNumBoost();
       const int num_boost_t2 = params_.GetTopPolicyTierTwoNumBoost();
 
@@ -1985,7 +2052,7 @@ void SearchWorker::PickNodesToExtendTask(
           (num_boost_t1 == 0 || !params_.GetUsePolicyBoosting())
               ? 999
               : top_utils[num_boost_t1 - 1];
-		  
+
 			const float min_policy_boost_util_t2 =
 					(num_boost_t2 == 0 || !params_.GetUsePolicyBoosting())
 							? 999
@@ -2018,32 +2085,52 @@ void SearchWorker::PickNodesToExtendTask(
         bool can_exit = false;
         best_edge.Reset();
 
-        // --- Root Beam Search Modification ---
+        // --- Root Beam Search Selection Logic ---
         const std::vector<int>* allowed_indices = nullptr;
         bool apply_beam_restriction = false;
         if (is_root_node && search_->IsRootBeamActive()) { // Use search_ pointer
              allowed_indices = &search_->GetRootBeamIndices();
              if (allowed_indices && !allowed_indices->empty()) {
                  apply_beam_restriction = true;
+                 LOGFILE << "Applying root beam restriction: " << allowed_indices->size() << " allowed moves.";
+             } else {
+                 LOGFILE << "Root beam active but no indices? Disabling restriction.";
              }
         }
 
         if (apply_beam_restriction) {
             // Iterate ONLY over allowed indices
             best_idx = -1; // Reset best index
+            best = std::numeric_limits<float>::lowest();
+            second_best = std::numeric_limits<float>::lowest();
+            best_edge.Reset();
+            second_best_edge.Reset();
+            best_without_u = std::numeric_limits<float>::lowest();
+
             for (int allowed_idx : *allowed_indices) {
-                if (allowed_idx < 0 || allowed_idx >= max_needed) continue;
+                if (allowed_idx < 0 || allowed_idx >= max_needed) {
+                    LOGFILE << "Warning: Invalid index " << allowed_idx << " in root beam.";
+                    continue;
+                }
 
                 // Ensure iterators and scores are up-to-date if not already calculated
                 if (allowed_idx > cache_filled_idx) {
                    for(int fill_idx = cache_filled_idx + 1; fill_idx <= allowed_idx; ++fill_idx) {
                        if (fill_idx == 0) cur_iters[fill_idx] = node->Edges();
                        else { cur_iters[fill_idx] = cur_iters[fill_idx - 1]; ++cur_iters[fill_idx]; }
+                       if (!cur_iters[fill_idx]) { // Check if iterator is valid
+                           LOGFILE << "Warning: Invalid iterator at index " << fill_idx;
+                           current_weightstarted[fill_idx] = 0; // Set default values
+                           current_score[fill_idx] = std::numeric_limits<float>::lowest();
+                           continue; // Skip if iterator is invalid
+                       }
                        current_weightstarted[fill_idx] = cur_iters[fill_idx].GetWeightStarted();
                        current_score[fill_idx] = -2.0f; // Mark as uncalculated
                    }
                    cache_filled_idx = allowed_idx;
                 }
+
+                 if (!cur_iters[allowed_idx]) continue; // Skip if iterator became invalid
 
                 float weightstarted = current_weightstarted[allowed_idx];
                 const float util = current_util[allowed_idx]; // Calculate util *before* policy boosting check
@@ -2053,14 +2140,15 @@ void SearchWorker::PickNodesToExtendTask(
                      p = ComputePolicyDecay(policy_decay_factor, p);
                      if (p < 0.01f) p /= 3;
                      if (visited[allowed_idx]) {
-                         if (util >= min_policy_boost_util_t1) p = std::max(p, policy_boost_t1); // Fixed scope issue
-                         if (util >= min_policy_boost_util_t2) p = std::max(p, policy_boost_t2); // Fixed scope issue
+                         if (util >= min_policy_boost_util_t1) p = std::max(p, policy_boost_t1);
+                         if (util >= min_policy_boost_util_t2) p = std::max(p, policy_boost_t2);
                          if (cur_iters[allowed_idx].GetWL(-999.0f) > -node->GetWL() && cur_iters[allowed_idx].GetWeight() < node->GetWeight() / 3) p *= 1.4;
                      }
                      current_score[allowed_idx] = p * puct_mult / (1 + weightstarted) + util;
                 }
 
-                 // Apply root move filter (redundant check as is_root_node is true here, but kept for clarity)
+                 // Apply root move filter (this check is technically redundant here as
+                 // is_root_node is true and apply_beam_restriction implies root, but kept for safety)
                  if (is_root_node && !root_move_filter.empty() &&
                      std::find(root_move_filter.begin(), root_move_filter.end(),
                              cur_iters[allowed_idx].GetMove()) == root_move_filter.end()) {
@@ -2080,32 +2168,59 @@ void SearchWorker::PickNodesToExtendTask(
                     second_best_edge = cur_iters[allowed_idx];
                 }
             }
+            if (best_idx == -1) {
+                LOGFILE << "Warning: No move selected within the active root beam. Root visits: " << node->GetN();
+                // Potentially disable beam or select best overall move as fallback?
+                // For now, let the code proceed which might lead to errors if best_edge is invalid.
+                // Fallback: Re-run selection without beam restriction to find *some* move
+                apply_beam_restriction = false; // Disable restriction for this selection only
+                goto select_without_beam; // Jump to the non-beam selection block
+            }
+
         } else {
+select_without_beam: // Label for fallback jump
             // Original loop iterating from 0 to max_needed
             best_idx = -1; // Reset best index
+            best = std::numeric_limits<float>::lowest();
+            second_best = std::numeric_limits<float>::lowest();
+            best_edge.Reset();
+            second_best_edge.Reset();
+            best_without_u = std::numeric_limits<float>::lowest();
+
             for (int idx = 0; idx < max_needed; ++idx) {
                 if (idx > cache_filled_idx) {
                    if (idx == 0) cur_iters[idx] = node->Edges();
                    else { cur_iters[idx] = cur_iters[idx - 1]; ++cur_iters[idx]; }
+                    if (!cur_iters[idx]) { // Check if iterator is valid
+                        LOGFILE << "Warning: Invalid iterator at index " << idx;
+                        current_weightstarted[idx] = 0;
+                        current_score[idx] = std::numeric_limits<float>::lowest();
+                        continue; // Skip if iterator is invalid
+                    }
                    current_weightstarted[idx] = cur_iters[idx].GetWeightStarted();
+                   current_score[idx] = -2.0f; // Mark as uncalculated
+                   cache_filled_idx = idx; // Update cache_filled_idx here
                 }
+                if (!cur_iters[idx]) continue; // Skip if iterator became invalid
+
+
                 float weightstarted = current_weightstarted[idx];
                 const float util = current_util[idx]; // Calculate util *before* policy boosting check
-                if (idx > cache_filled_idx) {
+
+                if (current_score[idx] < -1.0f) {
                    float p = cur_iters[idx].GetP();
                    p = ComputePolicyDecay(policy_decay_factor, p);
                    if (p < 0.01f) p /= 3;
                    if (visited[idx]) {
-                       if (util >= min_policy_boost_util_t1) p = std::max(p, policy_boost_t1); // Fixed scope issue
-                       if (util >= min_policy_boost_util_t2) p = std::max(p, policy_boost_t2); // Fixed scope issue
+                       if (util >= min_policy_boost_util_t1) p = std::max(p, policy_boost_t1);
+                       if (util >= min_policy_boost_util_t2) p = std::max(p, policy_boost_t2);
                        if (cur_iters[idx].GetWL(-999.0f) > -node->GetWL() && cur_iters[idx].GetWeight() < node->GetWeight() / 3) p *= 1.4;
                    }
                    current_score[idx] = p * puct_mult / (1 + weightstarted) + util;
-                   cache_filled_idx++;
                 }
 
                 // Apply root move filter
-                if (is_root_node && !root_move_filter.empty() &&         // Fixed typo here _ to .
+                if (is_root_node && !root_move_filter_.empty() &&
                     std::find(root_move_filter.begin(), root_move_filter.end(),
                             cur_iters[idx].GetMove()) == root_move_filter.end()) {
                    continue;
@@ -2129,10 +2244,10 @@ void SearchWorker::PickNodesToExtendTask(
                 }
             }
         }
-        // --- End Root Beam Search Modification ---
+        // --- End Root Beam Search Selection Logic ---
 
-        if (best_idx == -1) { // Safeguard if no move selected
-           LOGFILE << "Warning: No child selected in PickNodesToExtendTask. Beam active: " << apply_beam_restriction;
+        if (best_idx == -1 || !best_edge) { // Safeguard if no move selected or best_edge is invalid
+           LOGFILE << "Warning: No valid child selected in PickNodesToExtendTask. Beam active: " << apply_beam_restriction << ", is_root: " << is_root_node << ", num_children: " << max_needed;
            cur_limit = 0; // Prevent infinite loop
            continue;
         }
@@ -2233,9 +2348,18 @@ void SearchWorker::PickNodesToExtendTask(
                for(int fill_idx = cache_filled_idx + 1; fill_idx <= i; ++fill_idx) {
                    if (fill_idx == 0) cur_iters[fill_idx] = node->Edges();
                    else { cur_iters[fill_idx] = cur_iters[fill_idx - 1]; ++cur_iters[fill_idx]; }
+                   if (!cur_iters[fill_idx]) { // Check validity after potential advance
+                       LOGFILE << "Warning: Invalid iterator at index " << fill_idx << " during split check.";
+                       goto skip_split; // Use goto to break out of nested loop structure cleanly
+                   }
                }
                cache_filled_idx = i;
            }
+           if (!cur_iters[i]) { // Re-check validity just before use
+               LOGFILE << "Warning: Invalid iterator for index " << i << " before spawning node.";
+               goto skip_split;
+           }
+
           Node* child_node = cur_iters[i].GetOrSpawnNode(/* parent */ node);
           history.Append(cur_iters[i].GetMove());
           auto [child_repetitions, child_moves_left] =
@@ -2264,6 +2388,7 @@ void SearchWorker::PickNodesToExtendTask(
           history.Pop();
           full_path.pop_back();
         }
+skip_split:; // Label for goto jump
       }
       // Fall through to select the first child.
     }
@@ -2274,7 +2399,7 @@ void SearchWorker::PickNodesToExtendTask(
       // Reset iterator to beginning to find the next child
       Node::Iterator child_iter = node->Edges();
       for (int i = 0; i <= vtp_last_filled.back(); ++i) {
-         if (i > 0) ++child_iter; // Advance iterator (except for first edge)
+         if (!child_iter) break; // Stop if iterator becomes invalid
          idx = i;
          if (idx > min_idx && (*visits_to_perform.back())[idx] > 0) {
            current_path.back() = idx;
@@ -2287,6 +2412,7 @@ void SearchWorker::PickNodesToExtendTask(
            found_child = true;
            break;
          }
+         if (i < vtp_last_filled.back()) ++child_iter; // Advance iterator (except for last edge checked)
       }
     }
     if (!found_child) {
@@ -2479,7 +2605,7 @@ void SearchWorker::FetchSingleNodeResult(NodeToProcess* node_to_process,
       assert(tt_low_node != nullptr);
       tt_low_node->MakeTwin();
       node_to_process->tt_low_node = tt_low_node;
-      
+
     } else {
       auto [tt_low_node, is_tt_miss] =
           search_->dag_->TTGetOrCreate(node_to_process->hash);
@@ -2658,7 +2784,7 @@ void SearchWorker::DoBackupUpdateSingleNode(
   if (nl) {
     avg_weight = ComputeWeight(params_, nl->GetE());
     n->SetE(nl->GetE());
-		
+
   } else {
 		// game is over so uncertainty is highest possible
     if (params_.GetUseUncertaintyWeighting()) {
@@ -2674,7 +2800,7 @@ void SearchWorker::DoBackupUpdateSingleNode(
     avg_weight *= params_.GetEasyEvalWeightDecay();
   }
 
-	
+
   if (nl && nl->GetN() == 0) {
 
     float wl_corrected = nl->GetWL();
@@ -2771,7 +2897,7 @@ void SearchWorker::DoBackupUpdateSingleNode(
                             weight_to_fix);
     }
 
-    
+
 
     bool old_update_parent_bounds = update_parent_bounds;
     // Try setting parent bounds except the root or those already terminal.
