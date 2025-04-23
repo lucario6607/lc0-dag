@@ -635,26 +635,24 @@ inline float ComputePolicyDecay(const float factor, const float pol) {
 }  // namespace
 
 std::vector<std::string> Search::GetVerboseStats(Node* node) const {
-  assert(node == root_node_ || node->GetParent() == root_node_);
   const bool is_root = (node == root_node_);
   const bool is_odd_depth = !is_root;
   const bool is_black_to_move = (played_history_.IsBlackToMove() == is_root);
   const float draw_score = GetDrawScore(is_odd_depth);
   const float fpu = GetFpu(params_, node, is_root, draw_score);
-  const float cpuct = ComputeCpuct(params_, node->GetN(), is_root);
-  const float U_coeff =
-      cpuct * std::sqrt(std::max(node->GetChildrenVisits(), 1u));
- std::vector<EdgeAndNode> edges;
+  const float U_coeff = ComputeExploreFactor(params_, node->GetWeight(), node->GetWL(),
+                           node->GetVS(), node->GetE(), is_root);
+  std::vector<EdgeAndNode> edges;
   for (const auto& edge : node->Edges()) edges.push_back(edge);
 
-  std::sort(edges.begin(), edges.end(),
-            [&fpu, &U_coeff, &draw_score](EdgeAndNode a, EdgeAndNode b) {
-              return std::forward_as_tuple(
-                         a.GetN(), a.GetQ(fpu, draw_score) + a.GetU(U_coeff)) <
-                     std::forward_as_tuple(
-                         b.GetN(), b.GetQ(fpu, draw_score) + b.GetU(U_coeff));
-            });
-
+  std::sort(
+      edges.begin(), edges.end(),
+      [&fpu, &U_coeff, &draw_score](EdgeAndNode a, EdgeAndNode b) {
+        return std::forward_as_tuple(
+                   a.GetWeight(), a.GetQ(fpu, draw_score) + a.GetU(U_coeff)) <
+               std::forward_as_tuple(b.GetWeight(),
+                                     b.GetQ(fpu, draw_score) + b.GetU(U_coeff));
+      });
 
   auto print = [](auto* oss, auto pre, auto v, auto post, auto w, int p = 0) {
     *oss << pre << std::setw(w) << std::setprecision(p) << v << post;
@@ -712,18 +710,6 @@ std::vector<std::string> Search::GetVerboseStats(Node* node) const {
   };
   auto print_tail = [&](auto* oss, const auto* n) {
     const auto sign = n == node ? -1 : 1;
-    std::optional<float> v;
-    if (n && n->IsTerminal()) {
-      v = n->GetQ(sign * draw_score);
-    } else {
-      std::optional<EvalResult> nneval = GetCachedNNEval(n);
-      if (nneval) v = -nneval->q;
-    }
-    if (v) {
-      print(oss, "(V: ", sign * *v, ") ", 7, 4);
-    } else {
-      *oss << "(V:  -.----) ";
-    }
 
     if (n) {
       auto [lo, up] = n->GetBounds();
@@ -753,9 +739,9 @@ std::vector<std::string> Search::GetVerboseStats(Node* node) const {
     std::ostringstream oss;
     oss << std::left;
     // TODO: should this be displaying transformed index?
-    print_head(&oss, edge.GetMove(is_black_to_move).ToString(true),
-               MoveToNNIndex(edge.GetMove(), 0), edge.GetN(),
-               edge.GetNInFlight(), edge.GetP());
+    print_head(&oss, edge.GetMove(is_black_to_move).as_string(),
+               edge.GetMove().as_nn_index(0), edge.GetN(), edge.GetNInFlight(),
+               edge.GetP(), edge.GetCheck());
     print_stats(&oss, edge.node());
     print(&oss, "(U: ", edge.GetU(U_coeff), ") ", 6, 5);
     print(&oss, "(S: ", Q + edge.GetU(U_coeff) + M, ") ", 8, 5);
@@ -766,7 +752,7 @@ std::vector<std::string> Search::GetVerboseStats(Node* node) const {
   // Include stats about the node in similar format to its children above.
   std::ostringstream oss;
   print_head(&oss, "node ", node->GetNumEdges(), node->GetN(),
-             node->GetNInFlight(), node->GetVisitedPolicy());
+             node->GetNInFlight(), node->GetVisitedPolicy(), false);
   print_stats(&oss, node);
   print_tail(&oss, node);
 
@@ -811,44 +797,11 @@ void Search::SendMovesStats() const REQUIRES(counters_mutex_) {
   }
 }
 
-PositionHistory Search::GetPositionHistoryAtNode(const Node* node) const {
-  PositionHistory history(played_history_);
-  std::vector<Move> rmoves;
-  for (const Node* n = node; n != root_node_; n = n->GetParent()) {
-      if (!n->GetParent()) break; // Stop if parent is null (should only happen for root)
-      Edge* own_edge = n->GetOwnEdge();
-      if (!own_edge) break; // Should not happen for non-root nodes
-      rmoves.push_back(own_edge->GetMove());
-  }
-  for (auto it = rmoves.rbegin(); it != rmoves.rend(); it++) {
-    history.Append(*it);
-  }
-  return history;
+NNCacheLock Search::GetCachedNNEval(const PositionHistory& history) const {
+  const auto hash = dag_->GetHistoryHash(history);
+  NNCacheLock nneval(cache_, hash);
+  return nneval;
 }
-
-namespace {
-std::vector<Move> GetNodeLegalMoves(const Node* node, const ChessBoard& board) {
-  if (!node) return {};
-  std::vector<Move> moves;
-  if (node && node->HasChildren()) {
-    moves.reserve(node->GetNumEdges());
-    std::transform(node->Edges().begin(), node->Edges().end(),
-                   std::back_inserter(moves),
-                   [](const auto& edge) { return edge.GetMove(); });
-    return moves;
-  }
-  return board.GenerateLegalMoves();
-}
-}  // namespace
-
-std::optional<EvalResult> Search::GetCachedNNEval(const Node* node) const {
-  if (!node) return {};
-  PositionHistory history = GetPositionHistoryAtNode(node);
-  std::vector<Move> legal_moves =
-      GetNodeLegalMoves(node, history.Last().GetBoard());
-  return backend_->GetCachedEvaluation(
-      EvalPosition{history.GetPositions(), legal_moves});
-
 
 void Search::MaybeTriggerStop(const IterationStats& stats,
                               StoppersHints* hints) {
@@ -1034,8 +987,9 @@ std::vector<EdgeAndNode> Search::GetBestChildrenNoTemperature(Node* parent,
         // Neither is terminal, use standard rule.
         if (a_rank == kNonTerminal) {
           // Prefer largest playouts then eval then prior.
-          if (a.GetN() != b.GetN()) return a.GetN() > b.GetN(); // Use GetN for sorting
-           // Default doesn't matter here so long as they are the same as either
+          if (a.GetWeight() != b.GetWeight())
+            return a.GetWeight() > b.GetWeight();
+          // Default doesn't matter here so long as they are the same as either
           // both are N==0 (thus we're comparing equal defaults) or N!=0 and
           // default isn't used.
           if (a.GetQ(0.0f, draw_score) != b.GetQ(0.0f, draw_score)) {
@@ -1073,7 +1027,7 @@ EdgeAndNode Search::GetBestRootChildWithTemperature(float temperature) const {
 
   std::vector<float> cumulative_sums;
   float sum = 0.0;
-  float max_n = 0.0; // Changed from max_weight to max_n
+  float max_weight = 0.0;
   const float offset = params_.GetTemperatureVisitOffset();
   float max_eval = -1.0f;
   const float fpu =
@@ -1085,8 +1039,8 @@ EdgeAndNode Search::GetBestRootChildWithTemperature(float temperature) const {
                   edge.GetMove()) == root_move_filter_.end()) {
       continue;
     }
-    if (edge.GetN() + offset > max_n) { // Changed from GetWeight to GetN
-      max_n = edge.GetN() + offset;
+    if (edge.GetWeight() + offset > max_weight) {
+      max_weight = edge.GetWeight() + offset;
       max_eval = edge.GetQ(fpu, draw_score);
     }
   }
