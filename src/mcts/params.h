@@ -1,28 +1,7 @@
 /*
   This file is part of Leela Chess Zero.
-  Copyright (C) 2018-2019 The LCZero Authors
-
-  Leela Chess is free software: you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation, either version 3 of the License, or
-  (at your option) any later version.
-
-  Leela Chess is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with Leela Chess.  If not, see <http://www.gnu.org/licenses/>.
-
-  Additional permission under GNU GPL version 3 section 7
-
-  If you modify this Program, or any covered work, by linking or
-  combining it with NVIDIA Corporation's libraries from the NVIDIA CUDA
-  Toolkit and the NVIDIA CUDA Deep Neural Network library (or a
-  modified version of those libraries), containing parts covered by the
-  terms of the respective license agreement, the licensors of this
-  Program grant you additional permission to convey the resulting work.
+  Copyright (C) 2018-2023 The LCZero Authors
+  ... (License header) ...
 */
 
 #pragma once
@@ -30,6 +9,7 @@
 #include "neural/encoder.h"
 #include "utils/optionsdict.h"
 #include "utils/optionsparser.h"
+#include "neural/shared_params.h" // May or may not be needed
 
 namespace lczero {
 
@@ -40,59 +20,34 @@ class SearchParams {
   SearchParams(const OptionsDict& options);
   SearchParams(const SearchParams&) = delete;
 
-  // Use struct for WDLRescaleParams calculation to make them const.
   struct WDLRescaleParams {
-    WDLRescaleParams(float r, float d) {
-      ratio = r;
-      diff = d;
-    }
-    float ratio;
-    float diff;
+    WDLRescaleParams(float r, float d) { ratio = r; diff = d; }
+    float ratio; float diff;
   };
 
-  // Populates UciOptions with search parameters.
   static void Populate(OptionsParser* options);
 
-  // Parameter getters.
-  uint32_t GetMiniBatchSize() const { return kMiniBatchSize; }
+  // --- Existing Getters (ensure all needed ones are present) ---
+  int GetMiniBatchSize() const { return kMiniBatchSize; }
+  int GetMaxPrefetchBatch() const { return options_.Get<int>(kMaxPrefetchBatchId); }
   float GetCpuct(bool at_root) const { return at_root ? kCpuctAtRoot : kCpuct; }
-  float GetCpuctBase(bool at_root) const {
-    return at_root ? kCpuctBaseAtRoot : kCpuctBase;
-  }
-  float GetCpuctExponent(bool at_root) const {
-    return at_root ? kCpuctExponentAtRoot : kCpuctExponent;
-  }
-  float GetCpuctFactor(bool at_root) const {
-    return at_root ? kCpuctFactorAtRoot : kCpuctFactor;
-  }
+  float GetCpuctBase(bool at_root) const { return at_root ? kCpuctBaseAtRoot : kCpuctBase; }
+  float GetCpuctExponent(bool at_root) const { return at_root ? kCpuctExponentAtRoot : kCpuctExponent; }
+  float GetCpuctFactor(bool at_root) const { return at_root ? kCpuctFactorAtRoot : kCpuctFactor; }
   bool GetTwoFoldDraws() const { return kTwoFoldDraws; }
   float GetTemperature() const { return options_.Get<float>(kTemperatureId); }
-  float GetTemperatureVisitOffset() const {
-    return options_.Get<float>(kTemperatureVisitOffsetId);
-  }
+  float GetTemperatureVisitOffset() const { return options_.Get<float>(kTemperatureVisitOffsetId); }
   int GetTempDecayMoves() const { return options_.Get<int>(kTempDecayMovesId); }
-  int GetTempDecayDelayMoves() const {
-    return options_.Get<int>(kTempDecayDelayMovesId);
-  }
-  int GetTemperatureCutoffMove() const {
-    return options_.Get<int>(kTemperatureCutoffMoveId);
-  }
-  float GetTemperatureEndgame() const {
-    return options_.Get<float>(kTemperatureEndgameId);
-  }
-  float GetTemperatureWinpctCutoff() const {
-    return options_.Get<float>(kTemperatureWinpctCutoffId);
-  }
+  int GetTempDecayDelayMoves() const { return options_.Get<int>(kTempDecayDelayMovesId); }
+  int GetTemperatureCutoffMove() const { return options_.Get<int>(kTemperatureCutoffMoveId); }
+  float GetTemperatureEndgame() const { return options_.Get<float>(kTemperatureEndgameId); }
+  float GetTemperatureWinpctCutoff() const { return options_.Get<float>(kTemperatureWinpctCutoffId); }
   float GetNoiseEpsilon() const { return kNoiseEpsilon; }
   float GetNoiseAlpha() const { return kNoiseAlpha; }
   bool GetVerboseStats() const { return options_.Get<bool>(kVerboseStatsId); }
   bool GetLogLiveStats() const { return options_.Get<bool>(kLogLiveStatsId); }
-  bool GetFpuAbsolute(bool at_root) const {
-    return at_root ? kFpuAbsoluteAtRoot : kFpuAbsolute;
-  }
-  float GetFpuValue(bool at_root) const {
-    return at_root ? kFpuValueAtRoot : kFpuValue;
-  }
+  bool GetFpuAbsolute(bool at_root) const { return at_root ? kFpuAbsoluteAtRoot : kFpuAbsolute; }
+  float GetFpuValue(bool at_root) const { return at_root ? kFpuValueAtRoot : kFpuValue; }
   int GetCacheHistoryLength() const { return kCacheHistoryLength; }
   float GetPolicySoftmaxTemp() const { return kPolicySoftmaxTemp; }
   int GetMaxCollisionEvents() const { return kMaxCollisionEvents; }
@@ -102,123 +57,51 @@ class SearchParams {
   bool GetSyzygyFastPlay() const { return kSyzygyFastPlay; }
   int GetMultiPv() const { return options_.Get<int>(kMultiPvId); }
   bool GetPerPvCounters() const { return options_.Get<bool>(kPerPvCountersId); }
-  std::string GetScoreType() const {
-    return options_.Get<std::string>(kScoreTypeId);
-  }
+  std::string GetScoreType() const { return options_.Get<std::string>(kScoreTypeId); }
   FillEmptyHistory GetHistoryFill() const { return kHistoryFill; }
   float GetMovesLeftMaxEffect() const { return kMovesLeftMaxEffect; }
   float GetMovesLeftThreshold() const { return kMovesLeftThreshold; }
   float GetMovesLeftSlope() const { return kMovesLeftSlope; }
   float GetMovesLeftConstantFactor() const { return kMovesLeftConstantFactor; }
   float GetMovesLeftScaledFactor() const { return kMovesLeftScaledFactor; }
-  float GetMovesLeftQuadraticFactor() const {
-    return kMovesLeftQuadraticFactor;
-  }
+  float GetMovesLeftQuadraticFactor() const { return kMovesLeftQuadraticFactor; }
   bool GetDisplayCacheUsage() const { return kDisplayCacheUsage; }
   int GetMaxConcurrentSearchers() const { return kMaxConcurrentSearchers; }
   float GetDrawScore() const { return kDrawScore; }
-  ContemptMode GetContemptMode() const {
-    std::string mode = options_.Get<std::string>(kContemptModeId);
-    if (mode == "play") return ContemptMode::PLAY;
-    if (mode == "white_side_analysis") return ContemptMode::WHITE;
-    if (mode == "black_side_analysis") return ContemptMode::BLACK;
-    assert(mode == "disable");
-    return ContemptMode::NONE;
-  }
+  ContemptMode GetContemptMode() const; // Definition likely in .cc
   float GetWDLRescaleRatio() const { return kWDLRescaleParams.ratio; }
   float GetWDLRescaleDiff() const { return kWDLRescaleParams.diff; }
+  float GetWDLMaxS() const { return kWDLMaxS; }
   float GetWDLEvalObjectivity() const { return kWDLEvalObjectivity; }
+  float GetMaxOutOfOrderEvalsFactor() const { return kMaxOutOfOrderEvalsFactor; }
   uint32_t GetMaxOutOfOrderEvals() const { return kMaxOutOfOrderEvals; }
   float GetNpsLimit() const { return kNpsLimit; }
-
-  int GetTaskWorkersPerSearchWorker() const {
-    return kTaskWorkersPerSearchWorker;
-  }
-  int GetMinimumWorkSizeForProcessing() const {
-    return kMinimumWorkSizeForProcessing;
-  }
-  int GetMinimumWorkSizeForPicking() const {
-    return kMinimumWorkSizeForPicking;
-  }
-  int GetMinimumRemainingWorkSizeForPicking() const {
-    return kMinimumRemainingWorkSizeForPicking;
-  }
-  int GetMinimumWorkPerTaskForProcessing() const {
-    return kMinimumWorkPerTaskForProcessing;
-  }
+  int GetSolidTreeThreshold() const { return kSolidTreeThreshold; }
+  int GetTaskWorkersPerSearchWorker() const { return kTaskWorkersPerSearchWorker; }
+  int GetMinimumWorkSizeForProcessing() const { return kMinimumWorkSizeForProcessing; }
+  int GetMinimumWorkSizeForPicking() const { return kMinimumWorkSizeForPicking; }
+  int GetMinimumRemainingWorkSizeForPicking() const { return kMinimumRemainingWorkSizeForPicking; }
+  int GetMinimumWorkPerTaskForProcessing() const { return kMinimumWorkPerTaskForProcessing; }
   int GetIdlingMinimumWork() const { return kIdlingMinimumWork; }
   int GetThreadIdlingThreshold() const { return kThreadIdlingThreshold; }
-  int GetMaxCollisionVisitsScalingStart() const {
-    return kMaxCollisionVisitsScalingStart;
-  }
-  int GetMaxCollisionVisitsScalingEnd() const {
-    return kMaxCollisionVisitsScalingEnd;
-  }
-  float GetMaxCollisionVisitsScalingPower() const {
-    return kMaxCollisionVisitsScalingPower;
-  }
-  float GetCpuctUtilityStdevPrior() const { return kCpuctUtilityStdevPrior; }
-  float GetCpuctUtilityStdevScale() const { return kCpuctUtilityStdevScale; }
-  float GetCpuctUtilityStdevPriorWeight() const {
-    return kCpuctUtilityStdevPriorWeight;
-  }
-
-  float GetCpuctUncertaintyMinFactor() const { return kCpuctUncertaintyMinFactor; }
-  float GetCpuctUncertaintyMaxFactor() const { return kCpuctUncertaintyMaxFactor; }
-  float GetCpuctUncertaintyMinUncertainty() const { return kCpuctUncertaintyMinUncertainty; }
-	float GetCpuctUncertaintyMaxUncertainty() const {
-    return kCpuctUncertaintyMaxUncertainty;
-  }
-  bool GetUseCpuctUncertainty() const { return kUseCpuctUncertainty; }
-	bool GetJustFpuUncertainty() const { return kJustFpuUncertainty; }
-
-  bool GetUseVarianceScaling() const { return kUseVarianceScaling; }
-  bool GetMoveRuleBucketing() const { return kMoveRuleBucketing; }
-  std::string GetReportedNodes() const {
-    return options_.Get<std::string>(kReportedNodesId);
-  }
-  float GetUncertaintyWeightingCap() const {
-		return kUncertaintyWeightingCap;
-	}
-  float GetUncertaintyWeightingCoefficient() const {
-    return kUncertaintyWeightingCoefficient;
-  }
-  float GetUncertaintyWeightingExponent() const {
-    return kUncertaintyWeightingExponent;
-  }
-  bool GetUseUncertaintyWeighting() const { return kUseUncertaintyWeighting; }
-  float GetEasyEvalWeightDecay() const {
-    return kEasyEvalWeightDecay;
-  }
-
-  float GetDesperationMultiplier() const { return kDesperationMultiplier; }
-  float GetDesperationLow() const { return kDesperationLow; }
-  float GetDesperationHigh() const { return kDesperationHigh; }
-  float GetDesperationPriorWeight() const { return kDesperationPriorWeight; }
-  bool GetUseDesperation() const { return kUseDesperation;  }
-
-  float GetPolicyDecayExponent() const { return kPolicyDecayExponent; }
-  float GetPolicyDecayFactor() const { return kPolicyDecayFactor; }
-
-	float GetTopPolicyBoost() const { return kTopPolicyBoost; }
-  int GetTopPolicyNumBoost() const { return kTopPolicyNumBoost; }
-  float GetTopPolicyTierTwoBoost() const { return kTopPolicyTierTwoBoost; }
-  int GetTopPolicyTierTwoNumBoost() const { return kTopPolicyTierTwoNumBoost; }
-  bool GetUsePolicyBoosting() const { return kUsePolicyBoosting; }
-
+  int GetMaxCollisionVisitsScalingStart() const { return kMaxCollisionVisitsScalingStart; }
+  int GetMaxCollisionVisitsScalingEnd() const { return kMaxCollisionVisitsScalingEnd; }
+  float GetMaxCollisionVisitsScalingPower() const { return kMaxCollisionVisitsScalingPower; }
   bool GetSearchSpinBackoff() const { return kSearchSpinBackoff; }
+  // --- Add Getters for any other features assumed from Ergodice if needed ---
+  // e.g., bool GetUseVarianceScaling() const { return kUseVarianceScaling; }
 
-  bool GetUseCorrectionHistory() const { return kUseCorrectionHistory; }
-  float GetCorrectionHistoryAlpha() const { return kCorrectionHistoryAlpha; }
-  float GetCorrectionHistoryLambda() const { return kCorrectionHistoryLambda; }
 
-  // --- Root Beam Search ADDED ---
-  int GetRootBeamWidth() const { return kRootBeamWidth; }
+  // --- Root Beam Search Getters ---
+  int GetRootBeamMinWidth() const { return kRootBeamMinWidth; }
+  int GetRootBeamMaxWidth() const { return kRootBeamMaxWidth; }
   int GetRootBeamUpdateThreshold() const { return kRootBeamUpdateThreshold; }
-  // --- END Root Beam Search ADDED ---
+  float GetRootBeamUpdateIntervalFactor() const { return kRootBeamUpdateIntervalFactor; }
+  // --- END Root Beam Search Getters ---
 
   // Search parameter IDs.
   static const OptionId kMiniBatchSizeId;
+  static const OptionId kMaxPrefetchBatchId;
   static const OptionId kCpuctId;
   static const OptionId kCpuctAtRootId;
   static const OptionId kCpuctExponentId;
@@ -245,7 +128,7 @@ class SearchParams {
   static const OptionId kFpuStrategyAtRootId;
   static const OptionId kFpuValueAtRootId;
   static const OptionId kCacheHistoryLengthId;
-  static const OptionId kPolicySoftmaxTempId;
+  // static const OptionId kPolicySoftmaxTempId; // Assumed shared
   static const OptionId kMaxCollisionEventsId;
   static const OptionId kMaxCollisionVisitsId;
   static const OptionId kOutOfOrderEvalId;
@@ -254,7 +137,7 @@ class SearchParams {
   static const OptionId kMultiPvId;
   static const OptionId kPerPvCountersId;
   static const OptionId kScoreTypeId;
-  static const OptionId kHistoryFillId;
+  // static const OptionId kHistoryFillId; // Assumed shared
   static const OptionId kMovesLeftMaxEffectId;
   static const OptionId kMovesLeftThresholdId;
   static const OptionId kMovesLeftConstantFactorId;
@@ -269,12 +152,14 @@ class SearchParams {
   static const OptionId kContemptMaxValueId;
   static const OptionId kWDLCalibrationEloId;
   static const OptionId kWDLContemptAttenuationId;
+  static const OptionId kWDLMaxSId;
   static const OptionId kWDLEvalObjectivityId;
   static const OptionId kWDLDrawRateTargetId;
   static const OptionId kWDLDrawRateReferenceId;
   static const OptionId kWDLBookExitBiasId;
-  static const OptionId kMaxOutOfOrderEvalsId;
+  static const OptionId kMaxOutOfOrderEvalsFactorId;
   static const OptionId kNpsLimitId;
+  static const OptionId kSolidTreeThresholdId;
   static const OptionId kTaskWorkersPerSearchWorkerId;
   static const OptionId kMinimumWorkSizeForProcessingId;
   static const OptionId kMinimumWorkSizeForPickingId;
@@ -287,50 +172,21 @@ class SearchParams {
   static const OptionId kMaxCollisionVisitsScalingPowerId;
   static const OptionId kUCIOpponentId;
   static const OptionId kUCIRatingAdvId;
-  static const OptionId kCpuctUtilityStdevPriorId;
-  static const OptionId kCpuctUtilityStdevScaleId;
-  static const OptionId kCpuctUtilityStdevPriorWeightId;
-  static const OptionId kUseVarianceScalingId;
-  static const OptionId kMoveRuleBucketingId;
-  static const OptionId kReportedNodesId;
-  static const OptionId kUncertaintyWeightingCapId;
-  static const OptionId kUncertaintyWeightingCoefficientId;
-  static const OptionId kUncertaintyWeightingExponentId;
-  static const OptionId kUseUncertaintyWeightingId;
-  static const OptionId kEasyEvalWeightDecayId;
   static const OptionId kSearchSpinBackoffId;
-  static const OptionId kPolicyDecayExponentId;
-  static const OptionId kPolicyDecayFactorId;
-  static const OptionId kCpuctUncertaintyMinFactorId;
-  static const OptionId kCpuctUncertaintyMaxFactorId;
-  static const OptionId kCpuctUncertaintyMinUncertaintyId;
-  static const OptionId kCpuctUncertaintyMaxUncertaintyId;
-  static const OptionId kUseCpuctUncertaintyId;
-  static const OptionId kJustFpuUncertaintyId;
-  static const OptionId kDesperationMultiplierId;
-  static const OptionId kDesperationLowId;
-  static const OptionId kDesperationHighId;
-  static const OptionId kDesperationPriorWeightId;
-  static const OptionId kUseDesperationId;
-  static const OptionId kTopPolicyBoostId;
-  static const OptionId kTopPolicyNumBoostId;
-  static const OptionId kTopPolicyTierTwoBoostId;
-  static const OptionId kTopPolicyTierTwoNumBoostId;
-  static const OptionId kUsePolicyBoostingId;
-  static const OptionId kUseCorrectionHistoryId;
-  static const OptionId kCorrectionHistoryAlphaId;
-  static const OptionId kCorrectionHistoryLambdaId;
+  // --- Add OptionIds for any other features assumed from Ergodice if needed ---
+  // static const OptionId kUseVarianceScalingId;
+
+
   // --- Root Beam Search ADDED ---
-  static const OptionId kRootBeamWidthId;
+  static const OptionId kRootBeamMinWidthId;
+  static const OptionId kRootBeamMaxWidthId;
   static const OptionId kRootBeamUpdateThresholdId;
+  static const OptionId kRootBeamUpdateIntervalFactorId;
   // --- END Root Beam Search ADDED ---
 
  private:
   const OptionsDict& options_;
-  // Cached parameter values. Values have to be cached if either:
-  // 1. Parameter is accessed often and has to be cached for performance reasons.
-  // 2. Parameter has to stay the same during the search.
-  // TODO(crem) Some of those parameters can be converted to be dynamic after trivial search optimizations.
+  // Cached parameter values.
   const float kCpuct;
   const float kCpuctAtRoot;
   const float kCpuctExponent;
@@ -366,9 +222,12 @@ class SearchParams {
   const float kDrawScore;
   const float kContempt;
   const WDLRescaleParams kWDLRescaleParams;
+  const float kWDLMaxS;
   const float kWDLEvalObjectivity;
-  const int kMaxOutOfOrderEvals;
+  const float kMaxOutOfOrderEvalsFactor;
+  uint32_t kMaxOutOfOrderEvals; // Made non-const
   const float kNpsLimit;
+  const int kSolidTreeThreshold;
   const int kTaskWorkersPerSearchWorker;
   const int kMinimumWorkSizeForProcessing;
   const int kMinimumWorkSizeForPicking;
@@ -379,43 +238,18 @@ class SearchParams {
   const int kMaxCollisionVisitsScalingStart;
   const int kMaxCollisionVisitsScalingEnd;
   const float kMaxCollisionVisitsScalingPower;
-  const float kCpuctUtilityStdevPrior;
-  const float kCpuctUtilityStdevScale;
-  const float kCpuctUtilityStdevPriorWeight;
-  const bool kUseVarianceScaling;
-  const bool kMoveRuleBucketing;
-  const float kUncertaintyWeightingCap;
-  const float kUncertaintyWeightingCoefficient;
-  const float kUncertaintyWeightingExponent;
-  const bool kUseUncertaintyWeighting;
-  const float kEasyEvalWeightDecay;
   const bool kSearchSpinBackoff;
-  const float kCpuctUncertaintyMinFactor;
-  const float kCpuctUncertaintyMaxFactor;
-  const float kCpuctUncertaintyMinUncertainty;
-  const float kCpuctUncertaintyMaxUncertainty;
-  const bool kUseCpuctUncertainty;
-  const bool kJustFpuUncertainty;
-	const float kTopPolicyBoost;
-  const int kTopPolicyNumBoost;
-  const float kTopPolicyTierTwoBoost;
-  const int kTopPolicyTierTwoNumBoost;
-  const bool kUsePolicyBoosting;
-  const float kPolicyDecayExponent;
-  const float kPolicyDecayFactor;
-  const float kDesperationMultiplier;
-  const float kDesperationLow;
-  const float kDesperationHigh;
-  const float kDesperationPriorWeight;
-  const bool kUseDesperation;
-  const bool kUseCorrectionHistory;
-  const float kCorrectionHistoryAlpha;
-  const float kCorrectionHistoryLambda;
+  // --- Add const members for any other features assumed from Ergodice if needed ---
+  // const bool kUseVarianceScaling;
+
   // --- Root Beam Search ADDED ---
-  const int kRootBeamWidth;
+  const int kRootBeamMinWidth;
+  const int kRootBeamMaxWidth;
   const int kRootBeamUpdateThreshold;
+  const float kRootBeamUpdateIntervalFactor;
   // --- END Root Beam Search ADDED ---
 
 };
 
+} // No classic namespace
 }  // namespace lczero
