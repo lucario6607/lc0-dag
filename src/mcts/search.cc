@@ -28,6 +28,7 @@
 #include "mcts/search.h"
 
 #include <algorithm>
+#include <vector>
 #include <array>
 #include <chrono>
 #include <cmath>
