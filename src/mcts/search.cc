@@ -2921,3 +2921,4 @@ void SearchWorker::UpdateCounters() {
 }
 
 }  // namespace lczero
+
