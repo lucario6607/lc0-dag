@@ -223,46 +223,106 @@ void ApplyDirichletNoise(Node* node, float eps, double alpha) {
 }
 }  // namespace
 
-// --- Root Beam Search Implementation ---
+// --- Root Beam Search Update Function ---
 void Search::UpdateRootBeam(Node* root_node) REQUIRES(nodes_mutex_) {
-    // Ensure params_ is initialized before accessing GetRootBeamWidth()
-    if (!root_node->HasChildren() || params_.GetRootBeamWidth() <= 0) {
+    const int min_k = params_.GetRootBeamMinWidth();
+    const int max_k = params_.GetRootBeamMaxWidth();
+    bool use_dynamic_k = (min_k > 0 && min_k < max_k);
+    int target_k = max_k; // Calculate target width, default to max
+
+    if (!root_node->HasChildren() || max_k <= 0) { // Use MaxWidth to enable/disable
         root_beam_indices_.clear();
         root_beam_active_ = false; // Ensure beam is inactive if conditions not met
+        target_beam_width_ = 0;
+        current_effective_beam_width_ = 0;
         return;
     }
 
-    const int num_children = root_node->GetNumEdges(); // Use GetNumEdges as it reflects potential children
-    const int k = params_.GetRootBeamWidth();
+    const int num_children = root_node->GetNumEdges();
 
-    if (num_children <= k) {
-        // Beam is wider than or equal to number of children, no restriction needed
-        root_beam_indices_.clear(); // Signal no restriction
-        root_beam_active_ = false; // Keep inactive if no restriction needed
+    if (num_children <= min_k) { // If less than min width, no restriction needed
+        root_beam_indices_.clear();
+        root_beam_active_ = false;
+        target_beam_width_ = num_children;
+        current_effective_beam_width_ = num_children;
         return;
     }
 
-    std::vector<std::pair<uint32_t, int>> child_visits; // {visits, index} - Use uint32_t for GetN()
-    child_visits.reserve(num_children);
+    // *** Use PUCT score for ranking ***
+    std::vector<std::pair<float, int>> scored_children; // {PUCT_score, index}
+    scored_children.reserve(num_children);
+
+    // Calculate PUCT scores for ranking
+    const float draw_score = GetDrawScore(/* is_odd_depth= */ false);
+    const float fpu = GetFpu(params_, root_node, /* is_root= */ true, draw_score);
+    const MEvaluator m_evaluator = network_capabilities_.has_mlh ? MEvaluator(params_, root_node, network_capabilities_.has_mlh) : MEvaluator(params_, root_node, false);
+    const float cpuct_val = ComputeCpuct(params_, root_node->GetN(), true);
+    const float u_coeff_numerator = cpuct_val * std::sqrt(std::max((float)root_node->GetN(), 1.0f));
+
     int idx = 0;
     for (const auto& edge : root_node->Edges()) {
-        child_visits.push_back({edge.GetN(), idx++}); // GetN() gets visits for the child edge/node
+        if (!root_move_filter_.empty() &&
+            std::find(root_move_filter_.begin(), root_move_filter_.end(),
+                      edge.GetMove()) == root_move_filter_.end()) {
+             idx++;
+             continue;
+        }
+        float puct_score = CalculatePuctScore(params_, root_node, edge, fpu, draw_score, m_evaluator, u_coeff_numerator);
+        scored_children.push_back({puct_score, idx++});
     }
 
-    // Sort descending by visits
-    std::sort(child_visits.rbegin(), child_visits.rend());
+    if (scored_children.empty()) {
+         root_beam_indices_.clear();
+         root_beam_active_ = false;
+         target_beam_width_ = 0;
+         current_effective_beam_width_ = 0;
+         return;
+    }
 
-    // Store the indices of the top k children
+    // Sort descending by PUCT score
+    std::sort(scored_children.rbegin(), scored_children.rend());
+
+    // --- Interpolated Dynamic Width Heuristic ---
+    if (use_dynamic_k && scored_children.size() >= 2) {
+        const float score1 = scored_children[0].first;
+        const float score2 = scored_children[1].first;
+        const int effective_max_k_idx = std::min((int)scored_children.size() - 1, max_k - 1);
+        const float score_k_max = scored_children[effective_max_k_idx].first;
+
+        const float gap1 = score1 - score2;
+        const float gap_k = std::max(1e-6f, score1 - score_k_max);
+        const float clamped_relative_gap = std::clamp(gap1 / gap_k, 0.0f, 1.0f);
+
+        target_k = static_cast<int>(std::round(min_k + (max_k - min_k) * (1.0f - clamped_relative_gap)));
+
+        LOGFILE << "Dynamic beam: Gap1=" << gap1 << ", GapK=" << gap_k << ", RelGap=" << clamped_relative_gap << ", InterpolatedK=" << target_k;
+
+        target_k = std::min(target_k, (int)scored_children.size());
+        target_k = std::max(target_k, min_k);
+        target_k = std::min(target_k, max_k);
+
+    } else {
+        // Use fixed MaxWidth if dynamic k is disabled or not enough moves
+        target_k = std::min(max_k, (int)scored_children.size());
+    }
+    // --- End Dynamic Width Heuristic ---
+
+    // Store the indices of the top target_k moves
     root_beam_indices_.clear();
-    root_beam_indices_.reserve(k);
-    for (int i = 0; i < k && i < child_visits.size(); ++i) {
-        root_beam_indices_.push_back(child_visits[i].second);
+    root_beam_indices_.reserve(target_k);
+    for (int i = 0; i < target_k; ++i) {
+        root_beam_indices_.push_back(scored_children[i].second);
     }
-    root_beam_active_ = true; // Activate the beam
-    LOGFILE << "Root beam activated. Top " << root_beam_indices_.size() << " indices selected.";
+
+    // Set state after update
+    root_beam_active_ = true;
+    target_beam_width_ = target_k;
+    current_effective_beam_width_ = max_k; // Start wide
+    last_beam_width_step_visits_ = root_node->GetN(); // Reset step counter
+
+    LOGFILE << "Root beam updated. TargetWidth=" << target_k << ", EffectiveWidth=" << current_effective_beam_width_ << ". Top " << root_beam_indices_.size() << " indices selected.";
 }
 // --- End Root Beam Search Implementation ---
-
 
 namespace {
 // WDL conversion formula based on random walk model.
