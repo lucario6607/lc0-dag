@@ -107,11 +107,19 @@ class Search {
   NNCacheLock GetCachedNNEval(const PositionHistory& history) const;
 
  private:
+  bool root_beam_active_ = false;
+  std::vector<int> root_beam_indices_;
   uint64_t last_root_beam_update_visits_ = 0;
   int64_t last_root_beam_interval_used_ = 0;
   int current_effective_beam_width_ = 0;
   int target_beam_width_ = 0;
   uint64_t last_beam_width_step_visits_ = 0;
+  uint64_t last_root_beam_update_visits_ = 0;
+  int64_t last_root_beam_interval_used_ = 0;
+  int current_effective_beam_width_ = 0;
+  int target_beam_width_ = 0;
+  uint64_t last_beam_width_step_visits_ = 0;
+  void CheckAndUpdateRootBeam();
   // Computes the best move, maybe with temperature (according to the settings).
   void EnsureBestMoveKnown();
 
