@@ -37,9 +37,33 @@ enum class ContemptMode { PLAY, WHITE, BLACK, NONE };
 
 class SearchParams {
  public:
-    float GetRootBeamMaxWidth() const { return root_beam_max_width_; }
-    float GetRootBeamUpdateIntervalFactor() const { return root_beam_update_interval_factor_; }
-    int GetRootBeamWidthStepVisits() const { return root_beam_width_step_visits_; }
+    float GetRootBeamMaxWidth() const { 
+  if (options_.Exists(kRootBeamMaxWidthId)) {
+    return options_.Get<float>(kRootBeamMaxWidthId); 
+  }
+  return root_beam_max_width_;
+}
+
+float GetRootBeamUpdateIntervalFactor() const { 
+  if (options_.Exists(kRootBeamUpdateIntervalFactorId)) {
+    return options_.Get<float>(kRootBeamUpdateIntervalFactorId); 
+  }
+  return root_beam_update_interval_factor_;
+}
+
+int GetRootBeamWidthStepVisits() const { 
+  if (options_.Exists(kRootBeamWidthStepVisitsId)) {
+    return options_.Get<int>(kRootBeamWidthStepVisitsId); 
+  }
+  return root_beam_width_step_visits_;
+}
+
+int GetRootBeamUpdateThreshold() const { 
+  if (options_.Exists(kRootBeamUpdateThresholdId)) {
+    return options_.Get<int>(kRootBeamUpdateThresholdId); 
+  }
+  return kRootBeamUpdateThreshold;
+}
 
   SearchParams(const OptionsDict& options);
   SearchParams(const SearchParams&) = delete;
@@ -55,10 +79,7 @@ class SearchParams {
   };
 
   // Populates UciOptions with search parameters.
-  float GetRootBeamMaxWidth() const { return options_.Get<float>(kRootBeamMaxWidthId); }
-  float GetRootBeamUpdateIntervalFactor() const { return options_.Get<float>(kRootBeamUpdateIntervalFactorId); }
-  int GetRootBeamWidthStepVisits() const { return options_.Get<int>(kRootBeamWidthStepVisitsId); }
-  int GetRootBeamUpdateThreshold() const { return options_.Get<int>(kRootBeamUpdateThresholdId); }
+ 
   static void Populate(OptionsParser* options);
 
   // Parameter getters.
