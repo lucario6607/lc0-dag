@@ -1548,7 +1548,7 @@ void SearchWorker::GatherMinibatch() {
                   current_interval = search_->params_.GetRootBeamUpdateThreshold();
               } else {
                   current_interval = static_cast<int64_t>(search_->last_root_beam_interval_used_ * interval_factor);
-                  current_interval = std::max(1LL, current_interval); // Ensure interval is at least 1
+                  current_interval = std::max(static_cast<int64_t>(1), current_interval);
               }
               next_update_threshold = search_->last_root_beam_update_visits_ + current_interval;
               needs_update = current_root_visits >= (uint32_t)next_update_threshold;
