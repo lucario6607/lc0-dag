@@ -224,13 +224,14 @@ void ApplyDirichletNoise(Node* node, float eps, double alpha) {
 }
 }  // namespace
 
+ void Search::CheckAndUpdateRootBeam() {
   // --- Root Beam Search Modification: Update Trigger & Width Step ---
-  if (search_->params_.GetRootBeamMaxWidth() > 0) { // Check if beam is configured at all
+  if (params_.GetRootBeamMaxWidth() > 0) { // Check if beam is configured at all
       bool needs_update = false;
       uint32_t current_root_visits = 0;
       int64_t next_update_threshold = 0;
       int64_t current_interval = 0; // Initialize interval used for this check
-
+	  
       // --- Check for Update Trigger (Geometric Interval) ---
       { // Scope for read lock
           SharedMutex::SharedLock read_lock(search_->nodes_mutex_);
