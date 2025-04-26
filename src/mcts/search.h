@@ -95,26 +95,31 @@ class Search {
   const SearchParams& GetParams() const { return params_; }
 
   // Methods for Root Beam Search
-  void UpdateRootBeam(Node* root_node) REQUIRES(nodes_mutex_); // Added REQUIRES annotation
+  void UpdateRootBeam(Node* root_node) REQUIRES(nodes_mutex_);
   bool IsRootBeamActive() const REQUIRES_SHARED(nodes_mutex_) { return root_beam_active_; } // Read access needs shared lock
   const std::vector<int>& GetRootBeamIndices() const REQUIRES_SHARED(nodes_mutex_) { return root_beam_indices_; } // Read access needs shared lock
+
+  // Checks conditions and potentially calls UpdateRootBeam or adjusts effective width
+  void CheckAndUpdateRootBeam();
 
   // If called after GetBestMove, another call to GetBestMove will have results
   // from temperature having been applied again.
   void ResetBestMove();
-
   // Returns NN eval for a given node from cache, if that node is cached.
   NNCacheLock GetCachedNNEval(const PositionHistory& history) const;
 
  private:
-  bool root_beam_active_ = false;
-  std::vector<int> root_beam_indices_;
-  uint64_t last_root_beam_update_visits_ = 0;
-  int64_t last_root_beam_interval_used_ = 0;
-  int current_effective_beam_width_ = 0;
-  int target_beam_width_ = 0;
-  uint64_t last_beam_width_step_visits_ = 0;
-  void CheckAndUpdateRootBeam();
+  // --- Root Beam Search State ---
+  // Note: Guarded by nodes_mutex_ as they are updated/read during search iteration
+  bool root_beam_active_ GUARDED_BY(nodes_mutex_) = false;
+  std::vector<int> root_beam_indices_ GUARDED_BY(nodes_mutex_);
+  uint64_t last_root_beam_update_visits_ GUARDED_BY(nodes_mutex_) = 0;
+  int64_t last_root_beam_interval_used_ GUARDED_BY(nodes_mutex_) = 0;
+  int current_effective_beam_width_ GUARDED_BY(nodes_mutex_) = 0;
+  int target_beam_width_ GUARDED_BY(nodes_mutex_) = 0; // Set from params in constructor
+  uint64_t last_beam_width_step_visits_ GUARDED_BY(nodes_mutex_) = 0;
+  // --- END Root Beam Search State ---
+
   // Computes the best move, maybe with temperature (according to the settings).
   void EnsureBestMoveKnown();
 
@@ -306,12 +311,11 @@ class SearchWorker {
  private:
   struct NodeToProcess {
     bool IsExtendable() const {
-      return !is_collision && !node->IsTerminal() && !node->GetLowNode();
+      return !is_collision && node && !node->IsTerminal() && !node->GetLowNode(); // Added node check
     }
     bool IsCollision() const { return is_collision; }
     bool CanEvalOutOfOrder() const {
-      return is_tt_hit || is_cache_hit || node->IsTerminal() ||
-             node->GetLowNode();
+      return node && (is_tt_hit || is_cache_hit || node->IsTerminal() || node->GetLowNode()); // Added node check
     }
     bool ShouldAddToInput() const {
       return nn_queried && !is_tt_hit && !is_twin_hit;
@@ -321,7 +325,7 @@ class SearchWorker {
     // The path to the node to extend.
     BackupPath path;
     // The node to extend.
-    Node* node;
+    Node* node = nullptr; // Initialize to nullptr
     uint32_t multivisit = 0;
     // If greater than multivisit, and other parameters don't imply a lower
     // limit, multivist could be increased to this value without additional
@@ -342,8 +346,8 @@ class SearchWorker {
     uint64_t hash;
     uint64_t ch_hash;
 
-    LowNode* tt_low_node;
-    LowNode* twin_low_node;
+    LowNode* tt_low_node = nullptr; // Initialize to nullptr
+    LowNode* twin_low_node = nullptr; // Initialize to nullptr
 
     NNCacheLock lock;
     PositionHistory history;
@@ -354,18 +358,30 @@ class SearchWorker {
 
     static NodeToProcess Collision(const BackupPath& path, int collision_count,
                                    int max_count) {
+       // Check path validity before creating
+       if (path.empty() || !std::get<0>(path.back())) {
+           LOGFILE << "Error: Attempting to create Collision NodeToProcess with invalid path/node.";
+           // Return a default/invalid object or handle error appropriately
+           return NodeToProcess(); // Default constructor
+       }
       return NodeToProcess(path, collision_count, max_count);
     }
     static NodeToProcess Visit(const BackupPath& path,
                                const PositionHistory& history) {
+       // Check path validity before creating
+       if (path.empty() || !std::get<0>(path.back())) {
+            LOGFILE << "Error: Attempting to create Visit NodeToProcess with invalid path/node.";
+           // Return a default/invalid object or handle error appropriately
+            return NodeToProcess(); // Default constructor
+       }
       return NodeToProcess(path, history);
     }
 
-    void SetR50Bounds(NodeTree* dag) {}
+    void SetR50Bounds([[maybe_unused]] NodeTree* dag) {} // Added [[maybe_unused]]
 
     // Method to allow NodeToProcess to conform as a 'Computation'. Only safe
     // to call if is_cache_hit is true in the multigather path.
-    std::shared_ptr<NNEval> GetNNEval(int) const { return lock->eval; }
+    std::shared_ptr<NNEval> GetNNEval(int) const { return lock ? lock->eval : nullptr; } // Added check for lock validity
 
     std::string DebugString() const {
       std::ostringstream oss;
@@ -376,22 +392,30 @@ class SearchWorker {
           << " Collision:" << is_collision << " OOO:" << ooo_completed
           << " Repetitions:" << repetitions << " Path:";
       for (auto it = path.cbegin(); it != path.cend(); ++it) {
-        if (it != path.cbegin()) oss << "->";
+        if (it != path.cbegin()) oss << "->"; // Node validity checked below
         auto n = std::get<0>(*it);
+        if (!n) { oss << "[NULL]"; continue; } // Handle null node in path
         auto nl = n->GetLowNode();
         oss << n << ":" << n->GetNInFlight();
         if (nl) {
           oss << "(" << nl << ")";
         }
       }
-      oss << " --- " << std::get<0>(path.back())->DebugString();
-      if (node->GetLowNode())
-        oss << " --- " << node->GetLowNode()->DebugString();
+       if (node) { // Check node validity before DebugString
+          oss << " --- " << node->DebugString();
+          if (node->GetLowNode())
+             oss << " --- " << node->GetLowNode()->DebugString();
+       } else {
+           oss << " --- [NULL Node]";
+       }
 
       return oss.str();
     }
 
    private:
+     // Default constructor for error cases
+     NodeToProcess() : node(nullptr), is_collision(true) {}
+
     NodeToProcess(const BackupPath& path, uint32_t multivisit,
                   uint32_t max_count)
         : path(path),
@@ -433,14 +457,14 @@ class SearchWorker {
 
     // For task type gathering.
     BackupPath start_path;
-    Node* start;
-    int collision_limit;
+    Node* start = nullptr; // Initialize
+    int collision_limit = 0; // Initialize
     PositionHistory history;
     std::vector<NodeToProcess> results;
 
     // Task type post gather processing.
-    int start_idx;
-    int end_idx;
+    int start_idx = 0; // Initialize
+    int end_idx = 0; // Initialize
 
     bool complete = false;
 
@@ -448,7 +472,7 @@ class SearchWorker {
              int collision_limit)
         : task_type(kGathering),
           start_path(start_path),
-          start(std::get<0>(start_path.back())),
+          start(start_path.empty() ? nullptr : std::get<0>(start_path.back())), // Handle empty path
           collision_limit(collision_limit),
           history(in_history) {}
     PickTask(int start_idx, int end_idx)
