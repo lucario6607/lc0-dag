@@ -37,6 +37,10 @@ enum class ContemptMode { PLAY, WHITE, BLACK, NONE };
 
 class SearchParams {
  public:
+    float GetRootBeamMaxWidth() const { return root_beam_max_width_; }
+    float GetRootBeamUpdateIntervalFactor() const { return root_beam_update_interval_factor_; }
+    int GetRootBeamWidthStepVisits() const { return root_beam_width_step_visits_; }
+
   SearchParams(const OptionsDict& options);
   SearchParams(const SearchParams&) = delete;
 
@@ -326,6 +330,9 @@ class SearchParams {
   // --- END Root Beam Search ADDED ---
 
  private:
+  const float root_beam_max_width_ = 0.0f;
+  const float root_beam_update_interval_factor_ = 1.5f;
+  const int root_beam_width_step_visits_ = 1000;
   const OptionsDict& options_;
   // Cached parameter values. Values have to be cached if either:
   // 1. Parameter is accessed often and has to be cached for performance reasons.
