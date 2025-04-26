@@ -36,6 +36,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <list> // Added for GCQueue typedef
 
 #include "chess/board.h"
 #include "chess/callbacks.h"
@@ -444,7 +445,7 @@ class Node {
 
   // Estimated remaining plies.
   float m_ = 0.0f;
-	
+
 	float e_ = 0.0f;
 
   // How many completed visits this node had.
@@ -490,20 +491,25 @@ class LowNode {
   // Init from another low node, but use it for NNEval only.
   // For non-TT nodes.
   LowNode(const LowNode& p)
-      : wl_(p.wl_),
-        v_(p.v_),
-        hash_(p.hash_),
-        ch_hash_(p.ch_hash_),
+      : hash_(p.hash_),
         d_(p.d_),
-        m_(p.m_),
         vs_(p.vs_),
-        e_(p.e_), 
+        m_(p.m_),
+        v_(p.v_),
+        n_(p.n_),
+        weight_(p.weight_),
+        e_(p.e_),
+        ch_hash_(p.ch_hash_),
+        cht_entry_(p.cht_entry_),
+        ch_delta_(p.ch_delta_), // Added ch_delta_
         num_edges_(p.num_edges_),
         terminal_type_(Terminal::NonTerminal),
         lower_bound_(GameResult::BLACK_WON),
         upper_bound_(GameResult::WHITE_WON),
         is_transposition(false),
-        is_tt_(false) {
+        is_tt_(false),
+        is_twin_(p.is_twin_) // Added is_twin_
+        {
     assert(p.edges_);
     edges_ = std::make_unique<Edge[]>(num_edges_);
     std::memcpy(edges_.get(), p.edges_.get(), num_edges_ * sizeof(Edge));
@@ -511,20 +517,25 @@ class LowNode {
 
   // Only used when creating twin low nodes
   LowNode(const LowNode& p, const uint64_t hash)
-      : wl_(p.wl_),
-        v_(p.v_),
-        hash_(hash),
-        ch_hash_(p.ch_hash_),
+      : hash_(hash),
         d_(p.d_),
-        m_(p.m_),
         vs_(p.vs_),
-        e_(p.e_), 
+        m_(p.m_),
+        v_(p.v_),
+        n_(0), // Twins start with N=0
+        weight_(0), // Twins start with weight=0
+        e_(p.e_),
+        ch_hash_(p.ch_hash_), // Use same CH hash for now
+        cht_entry_(p.cht_entry_),
+        ch_delta_(p.ch_delta_), // Copy ch_delta_
         num_edges_(p.num_edges_),
         terminal_type_(Terminal::NonTerminal),
         lower_bound_(GameResult::BLACK_WON),
         upper_bound_(GameResult::WHITE_WON),
         is_transposition(false),
-        is_tt_(false) {
+        is_tt_(false),
+        is_twin_(true) // Mark as twin
+        {
     assert(p.edges_);
     edges_ = std::make_unique<Edge[]>(num_edges_);
     std::memcpy(edges_.get(), p.edges_.get(), num_edges_ * sizeof(Edge));
@@ -702,6 +713,7 @@ class LowNode {
   // Position hash and a TT key.
   uint64_t hash_ = 0;
 
+  // Hash for correction history table
   uint64_t ch_hash_ = 0;
 
   CorrHistEntry* cht_entry_ = nullptr;
@@ -1085,7 +1097,7 @@ class NodeTree {
   std::pair<LowNode*, bool> TTGetOrCreate(uint64_t hash);
 
   CorrHistEntry* CHTGetOrCreate(uint64_t hash);
-   
+
   std::pair<LowNode*, bool> TTGetOrCreate(const LowNode& p, uint64_t hash);
 
   // Evict unused low nodes from the Transposition Table.
@@ -1112,7 +1124,7 @@ class NodeTree {
     return history.CHHash();
   }
 
-  
+
 
 
  private:
