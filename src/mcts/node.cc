@@ -58,8 +58,24 @@ Move Edge::GetMove(bool as_opponent) const {
 }
 
 // Policy priors (P) are stored in a compressed 16-bit format.
-// ... (rest of SetP/GetP comments remain the same) ...
-
+// The compression format is similar to IEEE-754 binary16 / half format, but
+// with a modification allowing to store larger range of values with less
+// precision.
+//
+// Format uses 5 bits for exponent and 11 bits for significand, with no sign
+// bit as policy values are always non-negative.
+// Exponent bias is 14 (compared to 15 in binary16), so that value range is up
+// to ~127. Significand includes an implicit 1 bit, like in binary32/64.
+//
+// This allows to store values down to 2^-14 ~ 6e-5.
+// For significand it gives precision of 2^-11 ~ 5e-4.
+//
+// Policy P values are stored in the P = exp2f(logit) format.
+// Logit is L = log2f(P) = -E*log2f(10).
+// Logit range: for P=[6e-5 .. 1.0] L=[-14 .. 0].
+// The formula used to convert from float to uint16_t is roughly:
+// tmp = p + (1<<11)-(3<<28);
+// p_ = tmp < 0 ? 0 : static_cast<uint16_t>(tmp >> 12);
 void Edge::SetP(float p) {
   assert(0.0f <= p && p <= 1.0f);
   constexpr int32_t roundings = (1 << 11) - (3 << 28);
@@ -247,21 +263,23 @@ void LowNode::MakeNotTerminal(const Node* node) {
 
   // Include children too.
   if (node->GetNumEdges() > 0) {
-    for (const auto& child : node->Edges()) {
-      const auto n = child.GetN();
-      if (n > 0 && child.node() != nullptr) { // Added null check for child.node()
-        const float child_weight = child.GetWeight();
-        n_ += n;
+    for (const auto& child_edge : node->Edges()) {
+      if (!child_edge) break; // Stop if iterator becomes invalid
+      auto child = child_edge.node(); // Get the node pointer
+      if (child && child->GetN() > 0) { // Check if child node exists and has visits
+        const float child_weight = child->GetWeight();
+        n_ += child->GetN();
         weight_ += child_weight;
         // Flip Q for opponent.
         // Default values don't matter as n is > 0.
-        wl_ += child.GetWL(0.0f) * child_weight;
-        d_ += child.GetD(0.0f) * child_weight;
-        m_ += child.GetM(0.0f) * child_weight;
-        vs_ += child.GetVS(0.0f) * child_weight;
-        e_ += child.node()->GetE() * child_weight; // Corrected: Access E via node()
+        wl_ += child->GetWL() * child_weight; // Use node's GetWL directly
+        d_ += child->GetD() * child_weight;
+        m_ += child->GetM() * child_weight;
+        vs_ += child->GetVS() * child_weight;
+        e_ += child->GetE() * child_weight; // Corrected: Access E via node()
       }
     }
+
 
     // Recompute with current eval (instead of network's) and children's eval.
     if (weight_ > 0.0f) { // Avoid divide by zero
@@ -424,7 +442,7 @@ void LowNode::FinalizeScoreUpdate(float v, float d, float m, float vs,
 
 
 void LowNode::AdjustForTerminal(float v, float d, float m, float vs,
-                                uint32_t multivisit, float multiweight) {
+                                uint32_t multivisit [[maybe_unused]], float multiweight) {
   assert(static_cast<uint32_t>(multivisit) <= n_);
 
 
@@ -484,7 +502,7 @@ void Node::FinalizeScoreUpdate(float v, float d, float m, float vs,
 }
 
 void Node::AdjustForTerminal(float v, float d, float m, float vs,
-                             uint32_t multivisit, float multiweight) {
+                             uint32_t multivisit [[maybe_unused]], float multiweight) {
   assert(static_cast<uint32_t>(multivisit) <= n_);
 
   // Recompute Q.
@@ -747,9 +765,9 @@ static constexpr float m_tolerance = 0.000001f;
 
 #else
 
-  static bool WLDMInvariantsHold(float wl, float d, float m) {
+  static bool WLDMInvariantsHold(float wl [[maybe_unused]], float d [[maybe_unused]], float m [[maybe_unused]]) {
 		return true;
-	} 
+	}
 
 #endif
 
@@ -911,7 +929,10 @@ LowNode* NodeTree::TTFind(uint64_t hash) {
 }
 
 CorrHistEntry* NodeTree::CHTGetOrCreate(uint64_t hash) {
-  auto [cht_iter, is_cht_miss] = cht_.insert({hash, std::make_unique<CorrHistEntry>()});
+  auto [cht_iter, is_cht_miss] = cht_.try_emplace(hash);
+  if (is_cht_miss) {
+      cht_iter->second = std::make_unique<CorrHistEntry>();
+  }
   return cht_iter->second.get();
 }
 
