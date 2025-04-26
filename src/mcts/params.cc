@@ -564,7 +564,7 @@ const OptionId SearchParams::kRootBeamUpdateThresholdId{
     "root-beam-update-threshold", "RootBeamUpdateThreshold",
     "Number of root visits after which the root beam is calculated and activated."};
 // --- END Root Beam Search ADDED ---
-	
+
 
 void SearchParams::Populate(OptionsParser* options) {
   // Here the uci optimized defaults" are set.
@@ -707,16 +707,9 @@ void SearchParams::Populate(OptionsParser* options) {
   options->Add<FloatOption>(kCorrectionHistoryAlphaId, 0, 1) = 1;
   options->Add<FloatOption>(kCorrectionHistoryLambdaId, 0, 1) = 0.3;
 
-  // --- Root Beam Search ADDED ---
+  // --- Root Beam Search Options ---
   options->Add<IntOption>(kRootBeamWidthId, 0, 500) = 0; // Disabled by default
-  options->Add<IntOption>(kRootBeamUpdateThresholdId, 0, 1000000) = 100;
-  // --- END Root Beam Search ADDED ---
-
-
-	
-
-
-
+  options->Add<IntOption>(kRootBeamUpdateThresholdId, 0, 1000000) = 100; // Default threshold
 
   options->Add<BoolOption>(kSearchSpinBackoffId) = false;
 
@@ -839,57 +832,44 @@ SearchParams::SearchParams(const OptionsDict& options)
       kCpuctUtilityStdevScale(options.Get<float>(kCpuctUtilityStdevScaleId)),
       kCpuctUtilityStdevPriorWeight(
           options.Get<float>(kCpuctUtilityStdevPriorWeightId)),
-
-	
-    
       kUseVarianceScaling(options.Get<bool>(kUseVarianceScalingId)),
       kMoveRuleBucketing(options.Get<bool>(kMoveRuleBucketingId)),
       kUncertaintyWeightingCap(options.Get<float>(kUncertaintyWeightingCapId)),
+      // --- CPUCT Variance/Uncertainty/Desperation/Boosting/Decay ---
       kUncertaintyWeightingCoefficient(
           options.Get<float>(kUncertaintyWeightingCoefficientId)),
       kUncertaintyWeightingExponent(
           options.Get<float>(kUncertaintyWeightingExponentId)),
       kUseUncertaintyWeighting(options.Get<bool>(kUseUncertaintyWeightingId)),
-
-
-      kCpuctUncertaintyMinFactor(options.Get<float>(kCpuctUncertaintyMinFactorId)), 
+      kCpuctUncertaintyMinFactor(options.Get<float>(kCpuctUncertaintyMinFactorId)),
       kCpuctUncertaintyMaxFactor(options.Get<float>(kCpuctUncertaintyMaxFactorId)),
       kCpuctUncertaintyMinUncertainty(options.Get<float>(kCpuctUncertaintyMinUncertaintyId)),
       kCpuctUncertaintyMaxUncertainty(options.Get<float>(kCpuctUncertaintyMaxUncertaintyId)),
       kUseCpuctUncertainty(options.Get<bool>(kUseCpuctUncertaintyId)),
       kJustFpuUncertainty(options.Get<bool>(kJustFpuUncertaintyId)),
-
-				
-
-
-
+      kPolicyDecayExponent(options.Get<float>(kPolicyDecayExponentId)),
+      kPolicyDecayFactor(options.Get<float>(kPolicyDecayFactorId)),
+      kTopPolicyBoost(options.Get<float>(kTopPolicyBoostId)),
+      kTopPolicyNumBoost(options.Get<int>(kTopPolicyNumBoostId)),
+      kTopPolicyTierTwoBoost(options.Get<float>(kTopPolicyTierTwoBoostId)),
+      kTopPolicyTierTwoNumBoost(options.Get<int>(kTopPolicyTierTwoNumBoostId)),
+			kUsePolicyBoosting(options.Get<bool>(kUsePolicyBoostingId)),
       kDesperationMultiplier(options.Get<float>(kDesperationMultiplierId)),
       kDesperationLow(options.Get<float>(kDesperationLowId)),
       kDesperationHigh(options.Get<float>(kDesperationHighId)),
       kDesperationPriorWeight(options.Get<float>(kDesperationPriorWeightId)),
       kUseDesperation(options.Get<bool>(kUseDesperationId)),
-
-			kTopPolicyBoost(options.Get<float>(kTopPolicyBoostId)),
-      kTopPolicyNumBoost(options.Get<int>(kTopPolicyNumBoostId)),
-      kTopPolicyTierTwoBoost(options.Get<float>(kTopPolicyTierTwoBoostId)),
-      kTopPolicyTierTwoNumBoost(options.Get<int>(kTopPolicyTierTwoNumBoostId)),
-			kUsePolicyBoosting(options.Get<bool>(kUsePolicyBoostingId)),
-
-		
-
+      // --- Other ---
+      kEasyEvalWeightDecay(options.Get<float>(kEasyEvalWeightDecayId)), // Moved earlier
+      kSearchSpinBackoff(options_.Get<bool>(kSearchSpinBackoffId)), // Moved earlier
       kUseCorrectionHistory(options.Get<bool>(kUseCorrectionHistoryId)),
       kCorrectionHistoryAlpha(options.Get<float>(kCorrectionHistoryAlphaId)),
-      kCorrectionHistoryLambda(options.Get<float>(kCorrectionHistoryLambdaId)),
-      kPolicyDecayExponent(options.Get<float>(kPolicyDecayExponentId)),
-      kPolicyDecayFactor(options.Get<float>(kPolicyDecayFactorId)),
+      kCorrectionHistoryLambda(options.Get<float>(kCorrectionHistoryLambdaId)), // Moved earlier
 
-      // --- Root Beam Search ADDED ---
+      // --- Root Beam Search Cached Members ---
       kRootBeamWidth(options.Get<int>(kRootBeamWidthId)),
-      kRootBeamUpdateThreshold(options.Get<int>(kRootBeamUpdateThresholdId)),
-      // --- END Root Beam Search ADDED ---
-
-
-      kEasyEvalWeightDecay(options.Get<float>(kEasyEvalWeightDecayId)),
-      kSearchSpinBackoff(options_.Get<bool>(kSearchSpinBackoffId)) {}
+      kRootBeamUpdateThreshold(options.Get<int>(kRootBeamUpdateThresholdId))
+      // --- END Root Beam Search Cached Members ---
+      {}
 
 }  // namespace lczero
