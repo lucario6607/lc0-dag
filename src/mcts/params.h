@@ -55,6 +55,10 @@ class SearchParams {
   };
 
   // Populates UciOptions with search parameters.
+  float GetRootBeamMaxWidth() const { return options_.Get<float>(kRootBeamMaxWidthId); }
+  float GetRootBeamUpdateIntervalFactor() const { return options_.Get<float>(kRootBeamUpdateIntervalFactorId); }
+  int GetRootBeamWidthStepVisits() const { return options_.Get<int>(kRootBeamWidthStepVisitsId); }
+  int GetRootBeamUpdateThreshold() const { return options_.Get<int>(kRootBeamUpdateThresholdId); }
   static void Populate(OptionsParser* options);
 
   // Parameter getters.
