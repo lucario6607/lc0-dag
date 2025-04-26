@@ -114,11 +114,6 @@ class Search {
   int current_effective_beam_width_ = 0;
   int target_beam_width_ = 0;
   uint64_t last_beam_width_step_visits_ = 0;
-  uint64_t last_root_beam_update_visits_ = 0;
-  int64_t last_root_beam_interval_used_ = 0;
-  int current_effective_beam_width_ = 0;
-  int target_beam_width_ = 0;
-  uint64_t last_beam_width_step_visits_ = 0;
   void CheckAndUpdateRootBeam();
   // Computes the best move, maybe with temperature (according to the settings).
   void EnsureBestMoveKnown();
@@ -138,13 +133,6 @@ class Search {
   void SendUciInfo();  // Requires nodes_mutex_ to be held.
   // Sets stop to true and notifies watchdog thread.
   void FireStopInternal();
-
-  // --- Root Beam Search State ---
-  // Note: These are guarded by nodes_mutex_ as they are updated/read during search iteration
-  bool root_beam_active_ GUARDED_BY(nodes_mutex_) = false;
-  std::vector<int> root_beam_indices_ GUARDED_BY(nodes_mutex_);
-  // root_beam_width_ and root_beam_update_threshold_ are const members of params_, accessed via params_.Get...()
-  // --- END Root Beam Search State ---
 
   void SendMovesStats() const;
   // Function which runs in a separate thread and watches for time and
