@@ -37,33 +37,26 @@ enum class ContemptMode { PLAY, WHITE, BLACK, NONE };
 
 class SearchParams {
  public:
-    float GetRootBeamMaxWidth() const { 
-  if (options_.Exists(kRootBeamMaxWidthId)) {
-    return options_.Get<float>(kRootBeamMaxWidthId); 
+  float GetRootBeamMaxWidth() const { 
+    if (options_.Exists(kRootBeamMaxWidthId)) {
+      return options_.Get<float>(kRootBeamMaxWidthId); 
+    }
+    return root_beam_max_width_;
   }
-  return root_beam_max_width_;
-}
 
-float GetRootBeamUpdateIntervalFactor() const { 
-  if (options_.Exists(kRootBeamUpdateIntervalFactorId)) {
-    return options_.Get<float>(kRootBeamUpdateIntervalFactorId); 
+  float GetRootBeamUpdateIntervalFactor() const { 
+    if (options_.Exists(kRootBeamUpdateIntervalFactorId)) {
+      return options_.Get<float>(kRootBeamUpdateIntervalFactorId); 
+    }
+    return root_beam_update_interval_factor_;
   }
-  return root_beam_update_interval_factor_;
-}
 
-int GetRootBeamWidthStepVisits() const { 
-  if (options_.Exists(kRootBeamWidthStepVisitsId)) {
-    return options_.Get<int>(kRootBeamWidthStepVisitsId); 
+  int GetRootBeamWidthStepVisits() const { 
+    if (options_.Exists(kRootBeamWidthStepVisitsId)) {
+      return options_.Get<int>(kRootBeamWidthStepVisitsId); 
+    }
+    return root_beam_width_step_visits_;
   }
-  return root_beam_width_step_visits_;
-}
-
-int GetRootBeamUpdateThreshold() const { 
-  if (options_.Exists(kRootBeamUpdateThresholdId)) {
-    return options_.Get<int>(kRootBeamUpdateThresholdId); 
-  }
-  return kRootBeamUpdateThreshold;
-}
 
   SearchParams(const OptionsDict& options);
   SearchParams(const SearchParams&) = delete;
@@ -79,7 +72,6 @@ int GetRootBeamUpdateThreshold() const {
   };
 
   // Populates UciOptions with search parameters.
- 
   static void Populate(OptionsParser* options);
 
   // Parameter getters.
@@ -195,11 +187,11 @@ int GetRootBeamUpdateThreshold() const {
   float GetCpuctUncertaintyMinFactor() const { return kCpuctUncertaintyMinFactor; }
   float GetCpuctUncertaintyMaxFactor() const { return kCpuctUncertaintyMaxFactor; }
   float GetCpuctUncertaintyMinUncertainty() const { return kCpuctUncertaintyMinUncertainty; }
-	float GetCpuctUncertaintyMaxUncertainty() const {
+  float GetCpuctUncertaintyMaxUncertainty() const {
     return kCpuctUncertaintyMaxUncertainty;
   }
   bool GetUseCpuctUncertainty() const { return kUseCpuctUncertainty; }
-	bool GetJustFpuUncertainty() const { return kJustFpuUncertainty; }
+  bool GetJustFpuUncertainty() const { return kJustFpuUncertainty; }
 
   bool GetUseVarianceScaling() const { return kUseVarianceScaling; }
   bool GetMoveRuleBucketing() const { return kMoveRuleBucketing; }
@@ -207,8 +199,8 @@ int GetRootBeamUpdateThreshold() const {
     return options_.Get<std::string>(kReportedNodesId);
   }
   float GetUncertaintyWeightingCap() const {
-		return kUncertaintyWeightingCap;
-	}
+    return kUncertaintyWeightingCap;
+  }
   float GetUncertaintyWeightingCoefficient() const {
     return kUncertaintyWeightingCoefficient;
   }
@@ -229,7 +221,7 @@ int GetRootBeamUpdateThreshold() const {
   float GetPolicyDecayExponent() const { return kPolicyDecayExponent; }
   float GetPolicyDecayFactor() const { return kPolicyDecayFactor; }
 
-	float GetTopPolicyBoost() const { return kTopPolicyBoost; }
+  float GetTopPolicyBoost() const { return kTopPolicyBoost; }  
   int GetTopPolicyNumBoost() const { return kTopPolicyNumBoost; }
   float GetTopPolicyTierTwoBoost() const { return kTopPolicyTierTwoBoost; }
   int GetTopPolicyTierTwoNumBoost() const { return kTopPolicyTierTwoNumBoost; }
@@ -241,10 +233,15 @@ int GetRootBeamUpdateThreshold() const {
   float GetCorrectionHistoryAlpha() const { return kCorrectionHistoryAlpha; }
   float GetCorrectionHistoryLambda() const { return kCorrectionHistoryLambda; }
 
-  // --- Root Beam Search ADDED ---
+  // --- Root Beam Search Getters for cached values ---
   int GetRootBeamWidth() const { return kRootBeamWidth; }
-  int GetRootBeamUpdateThreshold() const { return kRootBeamUpdateThreshold; }
-  // --- END Root Beam Search ADDED ---
+  int GetRootBeamUpdateThreshold() const { 
+    if (options_.Exists(kRootBeamUpdateThresholdId)) {
+      return options_.Get<int>(kRootBeamUpdateThresholdId); 
+    }
+    return kRootBeamUpdateThreshold;
+  }
+  // --- END Root Beam Search Getters ---
 
   // Search parameter IDs.
   static const OptionId kMiniBatchSizeId;
@@ -349,13 +346,13 @@ int GetRootBeamUpdateThreshold() const {
   static const OptionId kUseCorrectionHistoryId;
   static const OptionId kCorrectionHistoryAlphaId;
   static const OptionId kCorrectionHistoryLambdaId;
+  
   // --- Root Beam Search ADDED ---
   static const OptionId kRootBeamWidthId;
   static const OptionId kRootBeamUpdateThresholdId;
-  static const OptionId kRootBeamMaxWidthId = "root-beam-max-width";
-  static const OptioId kRootBeamUpdateIntervalFactorId;
+  static const OptionId kRootBeamMaxWidthId;
+  static const OptionId kRootBeamUpdateIntervalFactorId;
   static const OptionId kRootBeamWidthStepVisitsId;
-  static const OptionId kRootBeamUpdateThresholdId;
   // --- END Root Beam Search ADDED ---
 
  private:
@@ -367,6 +364,8 @@ int GetRootBeamUpdateThreshold() const {
   // 1. Parameter is accessed often and has to be cached for performance reasons.
   // 2. Parameter has to stay the same during the search.
   // TODO(crem) Some of those parameters can be converted to be dynamic after trivial search optimizations.
+  // --- Reordered members to potentially fix -Wreorder warnings ---
+  // --- Standard Search Params ---
   const float kCpuct;
   const float kCpuctAtRoot;
   const float kCpuctExponent;
@@ -402,6 +401,7 @@ int GetRootBeamUpdateThreshold() const {
   const float kDrawScore;
   const float kContempt;
   const WDLRescaleParams kWDLRescaleParams;
+  // --- WDL Related ---
   const float kWDLEvalObjectivity;
   const int kMaxOutOfOrderEvals;
   const float kNpsLimit;
@@ -415,6 +415,7 @@ int GetRootBeamUpdateThreshold() const {
   const int kMaxCollisionVisitsScalingStart;
   const int kMaxCollisionVisitsScalingEnd;
   const float kMaxCollisionVisitsScalingPower;
+  // --- CPUCT Variance/Uncertainty/Desperation/Boosting/Decay ---
   const float kCpuctUtilityStdevPrior;
   const float kCpuctUtilityStdevScale;
   const float kCpuctUtilityStdevPriorWeight;
@@ -424,40 +425,34 @@ int GetRootBeamUpdateThreshold() const {
   const float kUncertaintyWeightingCoefficient;
   const float kUncertaintyWeightingExponent;
   const bool kUseUncertaintyWeighting;
-  const float kEasyEvalWeightDecay;
-  const bool kSearchSpinBackoff;
   const float kCpuctUncertaintyMinFactor;
   const float kCpuctUncertaintyMaxFactor;
   const float kCpuctUncertaintyMinUncertainty;
   const float kCpuctUncertaintyMaxUncertainty;
   const bool kUseCpuctUncertainty;
   const bool kJustFpuUncertainty;
-	const float kTopPolicyBoost;
+  const float kPolicyDecayExponent;
+  const float kPolicyDecayFactor;
+  const float kTopPolicyBoost;
   const int kTopPolicyNumBoost;
   const float kTopPolicyTierTwoBoost;
   const int kTopPolicyTierTwoNumBoost;
   const bool kUsePolicyBoosting;
-  const float kPolicyDecayExponent;
-  const float kPolicyDecayFactor;
   const float kDesperationMultiplier;
   const float kDesperationLow;
   const float kDesperationHigh;
   const float kDesperationPriorWeight;
   const bool kUseDesperation;
+  // --- Other ---
+  const float kEasyEvalWeightDecay;
+  const bool kSearchSpinBackoff;
   const bool kUseCorrectionHistory;
   const float kCorrectionHistoryAlpha;
   const float kCorrectionHistoryLambda;
-  // --- Root Beam Search ADDED ---
+  // --- Root Beam Search Cached Members ---
   const int kRootBeamWidth;
   const int kRootBeamUpdateThreshold;
-  const char* const kRootBeamMaxWidthId = "root-beam-max-width";
-  const char* const kRootBeamUpdateIntervalFactorId = "root-beam-update-interval-factor";
-  const char* const kRootBeamWidthStepVisitsId = "root-beam-width-step-visits";
-  const char* const kRootBeamUpdateThresholdId = "root-beam-update-threshold";
-  const int kRootBeamUpdateThreshold = 32; // Adjust this value as needed
-  // --- END Root Beam Search ADDED ---
-
-
+  // --- END Root Beam Search Cached Members ---
 };
 
 }  // namespace lczero
