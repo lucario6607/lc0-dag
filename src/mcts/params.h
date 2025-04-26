@@ -331,6 +331,10 @@ class SearchParams {
   // --- Root Beam Search ADDED ---
   static const OptionId kRootBeamWidthId;
   static const OptionId kRootBeamUpdateThresholdId;
+  static const OptionId kRootBeamMaxWidthId = "root-beam-max-width";
+  static const OptioId kRootBeamUpdateIntervalFactorId;
+  static const OptionId kRootBeamWidthStepVisitsId;
+  static const OptionId kRootBeamUpdateThresholdId;
   // --- END Root Beam Search ADDED ---
 
  private:
@@ -425,7 +429,13 @@ class SearchParams {
   // --- Root Beam Search ADDED ---
   const int kRootBeamWidth;
   const int kRootBeamUpdateThreshold;
+  const char* const kRootBeamMaxWidthId = "root-beam-max-width";
+  const char* const kRootBeamUpdateIntervalFactorId = "root-beam-update-interval-factor";
+  const char* const kRootBeamWidthStepVisitsId = "root-beam-width-step-visits";
+  const char* const kRootBeamUpdateThresholdId = "root-beam-update-threshold";
+  const int kRootBeamUpdateThreshold = 32; // Adjust this value as needed
   // --- END Root Beam Search ADDED ---
+
 
 };
 
