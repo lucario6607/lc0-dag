@@ -242,7 +242,8 @@ void Search::UpdateRootBeam(Node* root_node) REQUIRES(nodes_mutex_) {
     }
 
     const int beam_width = params_.GetRootBeamWidth();
-    std::vector<std::pair<uint64_t, int>> visited_indices; // Use uint64_t for visits
+    // Change storage type to hold the calculated score (float) and index
+    std::vector<std::pair<float, int>> scored_indices;
 
     int idx = 0;
     for (const auto& edge : root_node->Edges()) {
@@ -253,17 +254,24 @@ void Search::UpdateRootBeam(Node* root_node) REQUIRES(nodes_mutex_) {
             idx++;
             continue;
         }
-        visited_indices.push_back({edge.GetWeight(), idx}); // Use GetWeight() for sorting
+        // Calculate the sqrt(N) * P metric
+        // Use GetN() directly, as GetWeight() might include uncertainty scaling
+        // Handle N=0 case to avoid sqrt(0) * P = 0, give unvisited nodes with policy some chance
+        uint32_t n = edge.GetN();
+        float p = edge.GetP();
+        float score = (n == 0) ? p : (std::sqrt(static_cast<float>(n)) * p); // Use P if N=0, else sqrt(N)*P
+
+        scored_indices.push_back({score, idx});
         idx++;
     }
 
-    // Sort by visit count (weight) descending
-    std::sort(visited_indices.rbegin(), visited_indices.rend());
+    // Sort by the calculated score (sqrt(N)*P) descending
+    std::sort(scored_indices.rbegin(), scored_indices.rend());
 
     root_beam_indices_.clear();
     root_beam_indices_.reserve(beam_width);
-    for (int i = 0; i < std::min((int)visited_indices.size(), beam_width); ++i) {
-        root_beam_indices_.push_back(visited_indices[i].second);
+    for (int i = 0; i < std::min((int)scored_indices.size(), beam_width); ++i) {
+        root_beam_indices_.push_back(scored_indices[i].second);
     }
     std::sort(root_beam_indices_.begin(), root_beam_indices_.end()); // Sort indices for efficient lookup later
 
@@ -272,7 +280,7 @@ void Search::UpdateRootBeam(Node* root_node) REQUIRES(nodes_mutex_) {
     current_effective_beam_width_ = beam_width;
     last_beam_width_step_visits_ = root_node->GetN(); // Reset step timer
 
-    LOGFILE << "Root beam activated/updated. Width: " << beam_width
+    LOGFILE << "Root beam activated/updated (sqrt(N)*P). Width: " << beam_width
             << ", Indices: [";
     for(size_t i = 0; i < root_beam_indices_.size(); ++i) {
         LOGFILE << root_beam_indices_[i] << (i == root_beam_indices_.size() - 1 ? "" : ", ");
@@ -763,18 +771,19 @@ std::vector<std::string> Search::GetVerboseStats(Node* node) const {
   const float U_coeff = ComputeExploreFactor(params_, node->GetWeight(), node->GetWL(),
                            node->GetVS(), node->GetE(), is_root);
   std::vector<EdgeAndNode> edges;
+  // Define the comparison lambda based on PUCT score (Q+U) for sorting in GetVerboseStats
+  auto compare_puct =
+      [&fpu, &U_coeff, &draw_score](EdgeAndNode a, EdgeAndNode b) {
+        return std::forward_as_tuple(
+                   a.GetWeight(), a.GetQ(fpu, draw_score) + a.GetU(U_coeff)) <
+               std::forward_as_tuple(b.GetWeight(),
+                                     b.GetQ(fpu, draw_score) + b.GetU(U_coeff));
+      };
+
   for (const auto& edge : node->Edges()) edges.push_back(edge);
 
-  // Define the comparison lambda
-  auto compare_edges = [&fpu, &U_coeff, &draw_score](EdgeAndNode a, EdgeAndNode b) {
-    return std::forward_as_tuple(
-               a.GetWeight(), a.GetQ(fpu, draw_score) + a.GetU(U_coeff)) <
-           std::forward_as_tuple(b.GetWeight(),
-                                 b.GetQ(fpu, draw_score) + b.GetU(U_coeff));
-  };
-
-  // Use std::sort instead of std::partial_sort for full sorting
-  std::sort(edges.begin(), edges.end(), compare_edges);
+  // Sort the edges based on the PUCT score for display purposes
+  std::sort(edges.begin(), edges.end(), compare_puct);
 
 
   auto print = [](auto* oss, auto pre, auto v, auto post, auto w, int p = 0) {
@@ -1542,10 +1551,6 @@ void SearchWorker::ExecuteOneIteration() {
     }
   }
 
-  // --- Root Beam Search: Check and update beam before gathering ---
-  search_->CheckAndUpdateRootBeam();
-  // --- End Root Beam Search Modification ---
-
   // 2. Gather minibatch.
   GatherMinibatch();
   task_count_.store(-1, std::memory_order_release);
@@ -1852,12 +1857,17 @@ void SearchWorker::PickNodesToExtend(int collision_limit) {
   }
   std::vector<Move> empty_movelist;
 
-  // --- Root Beam Search Modification: No change needed here, beam update happens earlier ---
+  // --- Root Beam Search Modification: Moved check inside lock ---
 
   // This lock must be held until after the task_completed_ wait succeeds below.
   // Since the tasks perform work which assumes they have the lock, even though
   // actually this thread does.
   SharedMutex::Lock lock(search_->nodes_mutex_);
+
+  // --- Root Beam Search: Check and update beam *after* acquiring lock ---
+  search_->CheckAndUpdateRootBeam();
+  // --- End Root Beam Search Modification ---
+
   // Ensure root_node_ is valid before proceeding
   if (!search_->root_node_) {
       LOGFILE << "Warning: Root node is null in PickNodesToExtend.";
