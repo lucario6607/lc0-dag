@@ -559,8 +559,10 @@ void Search::SendUciInfo() REQUIRES(nodes_mutex_) REQUIRES(counters_mutex_) {
 // Decides whether anything important changed in stats and new info should be
 // shown to a user.
 void Search::MaybeOutputInfo() {
+  // Acquire locks in correct order: nodes_mutex first, then counters_mutex
   SharedMutex::Lock nodes_lock(nodes_mutex_);
   Mutex::Lock counters_lock(counters_mutex_);
+
   if (!bestmove_is_sent_ && current_best_edge_ &&
       (current_best_edge_.edge() != last_outputted_info_edge_ ||
        last_outputted_uci_info_.depth !=
@@ -569,21 +571,23 @@ void Search::MaybeOutputInfo() {
        last_outputted_uci_info_.seldepth != max_depth_ ||
        last_outputted_uci_info_.time + kUciInfoMinimumFrequencyMs <
            GetTimeSinceStart())) {
-    SendUciInfo(); // Requires nodes_mutex_, counters_mutex_ (acquired by caller)
+
+    SendUciInfo(); // Requires nodes_mutex_, counters_mutex_ (held by caller)
+
     if (params_.GetLogLiveStats()) {
-      // SendMovesStats acquires nodes_mutex_ internally, but not counters_mutex_.
-      // It accesses final_bestmove_ which should technically be guarded by counters_mutex_.
-      // To avoid deadlock, we call it outside the counters_lock here.
-      // We need a temporary copy of final_bestmove_ accessed while counters_lock is held.
+      // Release locks temporarily to call SendMovesStats, which acquires nodes_mutex_ internally
+      // Copy necessary data that requires counters_mutex_ first
       Move best_move_copy = final_bestmove_;
-      counters_lock.Unlock(); // Temporarily release counters_mutex_
-      nodes_lock.Unlock(); // Temporarily release nodes_mutex_
+      counters_lock.Unlock();
+      nodes_lock.Unlock();
 
-      SendMovesStats(); // Now accesses the copy or re-acquires locks internally if needed
+      SendMovesStats(); // This function now handles its own locking internally or uses the copy
 
-      nodes_lock.Lock(); // Re-acquire nodes_mutex_
-      counters_lock.Lock(); // Re-acquire counters_mutex_
+      // Reacquire locks
+      nodes_lock.Lock();
+      counters_lock.Lock();
     }
+
     if (stop_.load(std::memory_order_acquire) && !ok_to_respond_bestmove_) {
       std::vector<ThinkingInfo> info(1);
       info.back().comment = // Requires counters_mutex_ is held by caller
@@ -591,7 +595,9 @@ void Search::MaybeOutputInfo() {
       uci_responder_->OutputThinkingInfo(&info);
     }
   }
+  // Locks automatically released here by RAII guards
 }
+
 
 int64_t Search::GetTimeSinceStart() const {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1001,6 +1007,7 @@ void Search::SendMovesStats() const {
   }
 }
 
+
 NNCacheLock Search::GetCachedNNEval(const PositionHistory& history) const {
   const auto hash = dag_->GetHistoryHash(history);
   NNCacheLock nneval(cache_, hash);
@@ -1014,20 +1021,12 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
     hints->UpdateEstimatedNps(params_.GetNpsLimit());
   }
 
-  // Acquire locks in the correct order
-  SharedMutex::Lock nodes_lock(nodes_mutex_);
-  Mutex::Lock counters_lock(counters_mutex_);
-
-  // Already responded bestmove, nothing to do here.
-  if (bestmove_is_sent_) return;
-  // Don't stop when the root node is not yet expanded.
-  if (total_playouts_ + initial_visits_ == 0) return;
-
   bool should_stop = false;
-  if (!stop_.load(std::memory_order_acquire)) {
-    if (stopper_->ShouldStop(stats, hints)) {
-        should_stop = true;
-        // Don't call FireStopInternal() while holding locks
+  { // Scope for stopper check - doesn't need locks
+    if (!stop_.load(std::memory_order_acquire)) {
+        if (stopper_->ShouldStop(stats, hints)) {
+            should_stop = true;
+        }
     }
   }
 
@@ -1035,48 +1034,47 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
 
   // If we decided to stop now OR stop was already fired externally
   if (should_stop || stop_fired) {
-    // If we are the first to see that stop is needed and it's ok to respond.
+    // Acquire locks only if we might need to respond
     if (ok_to_respond_bestmove_ && !bestmove_is_sent_) {
-      SendUciInfo(); // Requires nodes_mutex_, counters_mutex_ (held by caller)
-      EnsureBestMoveKnown(); // Requires nodes_mutex_, counters_mutex_ (held by caller)
+      SharedMutex::Lock nodes_lock(nodes_mutex_);
+      Mutex::Lock counters_lock(counters_mutex_);
 
-      // Release locks before calling SendMovesStats to avoid deadlock
-      Move best_move_copy = final_bestmove_;
-      Move ponder_move_copy = final_pondermove_;
-      counters_lock.Unlock();
-      nodes_lock.Unlock();
+      // Double-check bestmove_is_sent_ under lock
+      if (ok_to_respond_bestmove_ && !bestmove_is_sent_) {
+          SendUciInfo(); // Requires nodes_mutex_, counters_mutex_ (held by caller)
+          EnsureBestMoveKnown(); // Requires nodes_mutex_, counters_mutex_ (held by caller)
 
-      SendMovesStats(); // Now acquires locks internally if needed
+          // Copy data needed after releasing locks
+          Move best_move_copy = final_bestmove_;
+          Move ponder_move_copy = final_pondermove_;
 
-      // Reacquire locks if necessary (though not strictly needed for remaining actions here)
-      // nodes_lock.Lock();
-      // counters_lock.Lock();
+          // Release locks before calling SendMovesStats to avoid potential deadlock
+          counters_lock.get_raw()->unlock(); // Manual unlock
+          nodes_lock.get_raw()->unlock();   // Manual unlock
 
-      BestMoveInfo info(best_move_copy, ponder_move_copy);
-      uci_responder_->OutputBestMove(&info);
-      stopper_->OnSearchDone(stats); // This likely doesn't need locks, but verify if changed
+          SendMovesStats(); // This function now acquires locks internally if needed
 
-      // Reacquire locks *before* modifying shared state
-      nodes_lock.Lock();
-      counters_lock.Lock();
-      bestmove_is_sent_ = true;
-      current_best_edge_ = EdgeAndNode();
+          // No need to reacquire locks just for outputting bestmove
+          BestMoveInfo info(best_move_copy, ponder_move_copy);
+          uci_responder_->OutputBestMove(&info);
+          stopper_->OnSearchDone(stats); // Likely doesn't need locks
+
+          // Reacquire locks to modify shared state
+          nodes_lock.get_raw()->lock();     // Manual lock
+          counters_lock.get_raw()->lock();   // Manual lock
+          bestmove_is_sent_ = true;
+          current_best_edge_ = EdgeAndNode();
+      }
+      // Locks are released automatically by RAII if they were re-acquired,
+      // or manually released above if bestmove was sent.
     }
 
     // If stop should happen (either decided now or previously), fire the internal signal
-    // Must be done *after* releasing locks if other threads wait on the CV while holding locks
-    // but FireStopInternal just sets an atomic and notifies, so it should be safe here.
-    // However, doing it after lock release is safer pattern if unsure.
-     if (should_stop && !stop_fired) { // Only fire if *we* decided to stop now
-         // Release locks before notifying potentially waiting threads
-         counters_lock.Unlock();
-         nodes_lock.Unlock();
-         FireStopInternal();
-         // Locks are released, function returns
-         return;
-     }
+    // Do this outside the main locks if possible to avoid holding them while notifying.
+    if (should_stop && !stop_fired) { // Only fire if *we* decided to stop now
+         FireStopInternal(); // Sets atomic and notifies CV
+    }
   }
-  // Locks are released automatically by RAII guards if function exits here
 }
 
 
@@ -3316,4 +3314,3 @@ void SearchWorker::UpdateCounters() {
 }
 
 }  // namespace lczero
-
