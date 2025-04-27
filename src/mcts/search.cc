@@ -167,7 +167,7 @@ Search::Search(NodeTree* dag, Network* network,
       dag_(dag),
       syzygy_tb_(syzygy_tb),
       played_history_(dag->GetPositionHistory()),
-      network_(network),
+      network_(network), // Initialized before params_ due to -Wreorder warning
       params_(options), // Initialize params_ member
       searchmoves_(searchmoves),
       start_time_(start_time),
@@ -569,13 +569,18 @@ void Search::MaybeOutputInfo() {
        last_outputted_uci_info_.seldepth != max_depth_ ||
        last_outputted_uci_info_.time + kUciInfoMinimumFrequencyMs <
            GetTimeSinceStart())) {
-    SendUciInfo();
+    SendUciInfo(); // Requires nodes_mutex_, counters_mutex_ (acquired by caller)
     if (params_.GetLogLiveStats()) {
+      // SendMovesStats acquires nodes_mutex_ internally, but not counters_mutex_.
+      // It accesses final_bestmove_ which should technically be guarded by counters_mutex_.
+      // To avoid deadlock, we call it outside the counters_lock here.
+      lock.Unlock(); // Temporarily release counters_mutex_
       SendMovesStats();
+      lock.Lock(); // Re-acquire counters_mutex_
     }
     if (stop_.load(std::memory_order_acquire) && !ok_to_respond_bestmove_) {
       std::vector<ThinkingInfo> info(1);
-      info.back().comment =
+      info.back().comment = // Requires counters_mutex_ is held by caller
           "WARNING: Search has reached limit and does not make any progress.";
       uci_responder_->OutputThinkingInfo(&info);
     }
@@ -771,16 +776,38 @@ std::vector<std::string> Search::GetVerboseStats(Node* node) const {
   const float U_coeff = ComputeExploreFactor(params_, node->GetWeight(), node->GetWL(),
                            node->GetVS(), node->GetE(), is_root);
   std::vector<EdgeAndNode> edges;
+
   // Define the comparison lambda based on PUCT score (Q+U) for sorting in GetVerboseStats
   auto compare_puct =
       [&fpu, &U_coeff, &draw_score](EdgeAndNode a, EdgeAndNode b) {
-        return std::forward_as_tuple(
-                   a.GetWeight(), a.GetQ(fpu, draw_score) + a.GetU(U_coeff)) <
-               std::forward_as_tuple(b.GetWeight(),
-                                     b.GetQ(fpu, draw_score) + b.GetU(U_coeff));
+        // Need to handle potential null nodes within EdgeAndNode if GetQ/GetU access them
+        // Although, the loop below only adds edges with valid pointers.
+        float q_a = a.HasNode() ? a.node()->GetQ(draw_score) : fpu;
+        float u_a = a.GetU(U_coeff); // Assumes GetP() is valid even without node
+        float weight_a = a.GetWeight();
+
+        float q_b = b.HasNode() ? b.node()->GetQ(draw_score) : fpu;
+        float u_b = b.GetU(U_coeff);
+        float weight_b = b.GetWeight();
+
+        // Sort primarily by PUCT score descending, then by weight descending as tiebreaker
+        // Higher score is better, so use > for score comparison
+        // Higher weight is better, so use > for weight comparison
+        // Use Q+U for sorting, consistent with selection logic
+        float score_a = q_a + u_a;
+        float score_b = q_b + u_b;
+
+        if (score_a != score_b) {
+            return score_a > score_b; // Higher score first
+        }
+        // If scores are equal, use weight as tie-breaker
+        return weight_a > weight_b; // Higher weight first if scores are equal
       };
 
-  for (const auto& edge : node->Edges()) edges.push_back(edge);
+
+  for (const auto& edge : node->Edges()) {
+      edges.push_back(edge); // Push back the iterator object
+  }
 
   // Sort the edges based on the PUCT score for display purposes
   std::sort(edges.begin(), edges.end(), compare_puct);
@@ -900,9 +927,36 @@ std::vector<std::string> Search::GetVerboseStats(Node* node) const {
   return infos;
 }
 
-void Search::SendMovesStats() const REQUIRES(counters_mutex_) {
-  auto move_stats = GetVerboseStats(root_node_);
+void Search::SendMovesStats() const {
+  // 1. Get verbose stats data under the node lock first.
+  std::vector<std::string> move_stats;
+  std::string opponent_moves_header;
+  std::vector<std::string> opponent_moves_stats;
+  Move best_move_copy; // Copy best move under lock if needed for header
+  {
+    SharedMutex::Lock nodes_lock(nodes_mutex_); // Acquire node lock
+    if (!root_node_) return; // Check root node validity
 
+    move_stats = GetVerboseStats(root_node_); // Requires nodes_mutex_
+
+    // Need counters_mutex to safely read final_bestmove_
+    Mutex::Lock counters_lock(counters_mutex_);
+    best_move_copy = final_bestmove_;
+    counters_lock.Unlock(); // Release counters lock after copy
+
+    // Find the edge corresponding to the best move (requires node lock)
+    for (auto& edge : root_node_->Edges()) {
+      if (edge.GetMove(played_history_.IsBlackToMove()) == best_move_copy) {
+         if (edge.HasNode()) {
+             opponent_moves_header = "--- Opponent moves after: " + best_move_copy.as_string();
+             opponent_moves_stats = GetVerboseStats(edge.node()); // Requires nodes_mutex_
+         }
+         break; // Found the edge
+      }
+    }
+  } // Release node lock
+
+  // 2. Output/Log the collected data
   if (params_.GetVerboseStats()) {
     std::vector<ThinkingInfo> infos;
     std::transform(move_stats.begin(), move_stats.end(),
@@ -911,18 +965,29 @@ void Search::SendMovesStats() const REQUIRES(counters_mutex_) {
                      info.comment = line;
                      return info;
                    });
-    uci_responder_->OutputThinkingInfo(&infos);
+
+    // Add opponent move stats if available
+    if (!opponent_moves_header.empty()) {
+       ThinkingInfo header_info;
+       header_info.comment = opponent_moves_header;
+       infos.push_back(header_info);
+       std::transform(opponent_moves_stats.begin(), opponent_moves_stats.end(),
+                     std::back_inserter(infos), [](const std::string& line) {
+                       ThinkingInfo info;
+                       info.comment = line;
+                       return info;
+                     });
+    }
+    if (!infos.empty()) { // Check if there's anything to send
+        uci_responder_->OutputThinkingInfo(&infos);
+    }
   } else {
+    // Logging does not require counters_mutex_
     LOGFILE << "=== Move stats:";
     for (const auto& line : move_stats) LOGFILE << line;
-  }
-  for (auto& edge : root_node_->Edges()) {
-    if (!(edge.GetMove(played_history_.IsBlackToMove()) == final_bestmove_)) {
-      continue;
-    }
-    if (edge.HasNode()) {
-      LOGFILE << "--- Opponent moves after: " << final_bestmove_.as_string();
-      for (const auto& line : GetVerboseStats(edge.node())) {
+    if (!opponent_moves_header.empty()) {
+      LOGFILE << opponent_moves_header;
+      for (const auto& line : opponent_moves_stats) {
         LOGFILE << line;
       }
     }
@@ -955,10 +1020,16 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
   // If we are the first to see that stop is needed.
   if (stop_.load(std::memory_order_acquire) && ok_to_respond_bestmove_ &&
       !bestmove_is_sent_) {
-    SendUciInfo();
-    EnsureBestMoveKnown();
+    SendUciInfo(); // Requires nodes_mutex_, counters_mutex_ (held by caller)
+    EnsureBestMoveKnown(); // Requires nodes_mutex_, counters_mutex_ (held by caller)
+    // Must release locks before calling SendMovesStats to avoid deadlock
+    lock.Unlock();
+    nodes_lock.Unlock();
     SendMovesStats();
-    BestMoveInfo info(final_bestmove_, final_pondermove_);
+    nodes_lock.Lock(); // Re-acquire
+    lock.Lock();       // Re-acquire
+
+    BestMoveInfo info(final_bestmove_, final_pondermove_); // Requires counters_mutex_
     uci_responder_->OutputBestMove(&info);
     stopper_->OnSearchDone(stats);
     bestmove_is_sent_ = true;
@@ -1856,8 +1927,6 @@ void SearchWorker::PickNodesToExtend(int collision_limit) {
     task_added_.notify_all();
   }
   std::vector<Move> empty_movelist;
-
-  // --- Root Beam Search Modification: Moved check inside lock ---
 
   // This lock must be held until after the task_completed_ wait succeeds below.
   // Since the tasks perform work which assumes they have the lock, even though
