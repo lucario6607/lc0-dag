@@ -422,8 +422,8 @@ class Node {
   // 8 byte fields.
   // Average value (from value head of neural network) of all visited nodes in
   // subtree. For terminal nodes, eval is stored. This is from the perspective
-  // of the player who "just" moved to reach this position, rather than from
-  // the perspective of the player-to-move for the position. WL stands for "W
+  // of the player who "just" moved to reach this position, rather than from the
+  // perspective of the player-to-move for the position. WL stands for "W
   // minus L". Is equal to Q if draw score is 0.
   double wl_ = 0.0;
 
@@ -491,17 +491,23 @@ class LowNode {
   // Init from another low node, but use it for NNEval only.
   // For non-TT nodes.
   LowNode(const LowNode& p)
-      : hash_(p.hash_),
-        d_(p.d_),
+      : // Initializer list reordered based on -Wreorder
+        wl_(p.wl_),
         vs_(p.vs_),
-        m_(p.m_),
-        v_(p.v_),
-        n_(p.n_),
         weight_(p.weight_),
-        e_(p.e_),
+        d_(p.d_),
+        children_weight_(p.children_weight_),
+        hash_(p.hash_),
         ch_hash_(p.ch_hash_),
         cht_entry_(p.cht_entry_),
+        // edges_ handled below
+        // child_ handled below
+        m_(p.m_),
+        v_(p.v_),
+        e_(p.e_),
         ch_delta_(p.ch_delta_),
+        n_(p.n_),
+        num_parents_(p.num_parents_),
         num_edges_(p.num_edges_),
         terminal_type_(Terminal::NonTerminal),
         lower_bound_(GameResult::BLACK_WON),
@@ -517,17 +523,23 @@ class LowNode {
 
   // Only used when creating twin low nodes
   LowNode(const LowNode& p, const uint64_t hash)
-      : hash_(hash),
-        d_(p.d_),
+      : // Initializer list reordered based on -Wreorder
+        wl_(p.wl_),
         vs_(p.vs_),
-        m_(p.m_),
-        v_(p.v_),
-        n_(0), // Twins start with N=0
         weight_(0), // Twins start with weight=0
-        e_(p.e_),
+        d_(p.d_),
+        children_weight_(0.0f), // Twins start with 0 child weight
+        hash_(hash),
         ch_hash_(p.ch_hash_), // Use same CH hash for now
         cht_entry_(p.cht_entry_),
+        // edges_ handled below
+        // child_ handled below
+        m_(p.m_),
+        v_(p.v_),
+        e_(p.e_),
         ch_delta_(p.ch_delta_), // Copy ch_delta_
+        n_(0), // Twins start with N=0
+        num_parents_(0), // Twins start with 0 parents initially
         num_edges_(p.num_edges_),
         terminal_type_(Terminal::NonTerminal),
         lower_bound_(GameResult::BLACK_WON),
@@ -693,73 +705,36 @@ class LowNode {
   // to smallest.
 
   // 8 byte fields.
-  // Average value (from value head of neural network) of all visited nodes in
-  // subtree. For terminal nodes, eval is stored. This is from the perspective
-  // of the player who "just" moved to reach this position, rather than from the
-  // perspective of the player-to-move for the position.
-  // WL stands for "W minus L". Is equal to Q if draw score is 0.
   double wl_ = 0.0f;
-
-  // Value squared sum. Used to compute variance.
   double vs_ = 0.0f;
-  // Weight on node
   double weight_ = 0.0f;
-  // Averaged draw probability. Works similarly to WL, except that D is not
-  // flipped depending on the side to move.
   double d_ = 0.0f;
-
   float children_weight_ = 0.0f;
-
-  // Position hash and a TT key.
   uint64_t hash_ = 0;
-
-  // Hash for correction history table
   uint64_t ch_hash_ = 0;
-
   CorrHistEntry* cht_entry_ = nullptr;
 
-
-
   // 8 byte fields on 64-bit platforms, 4 byte on 32-bit.
-  // Array of edges.
   std::unique_ptr<Edge[]> edges_;
-  // Pointer to the first child. nullptr when no children.
   atomic_unique_ptr<Node> child_;
 
   // 4 byte fields.
-
-  // Estimated remaining plies.
   float m_ = 0.0f;
-  // original eval
   float v_ = 0.0f;
-
-	float e_ = 0.0f;
-
+  float e_ = 0.0f;
   float ch_delta_ = 0.0f;
-
-
-  // How many completed visits this node had.
   uint32_t n_ = 0;
 
   // 2 byte fields.
-  // Number of parents.
   uint16_t num_parents_ = 0;
 
   // 1 byte fields.
-  // Number of edges in @edges_.
   uint8_t num_edges_ = 0;
-  // Bit fields using parts of uint8_t fields initialized in the constructor.
-  // Whether or not this node end game (with a winning of either sides or draw).
   Terminal terminal_type_ : 2;
-  // Best and worst result for this node.
   GameResult lower_bound_ : 2;
   GameResult upper_bound_ : 2;
-  // Low node is a transposition (for ever).
   bool is_transposition : 1;
-  // Low node is in TT, i.e. was not evaluated or was modified.
   bool is_tt_ : 1;
-
-  // if the node was created as a twin it shouldn't be used for correction history
   bool is_twin_ = false;
 };
 
@@ -1154,7 +1129,6 @@ class NodeTree {
 
   // Garbage collection queue.
   GCQueue gc_queue_;
-};
+}; // Missing semicolon added here
 
-}  // namespace lczero
 }  // namespace lczero
