@@ -559,7 +559,7 @@ void Search::SendUciInfo() REQUIRES(nodes_mutex_) REQUIRES(counters_mutex_) {
 // Decides whether anything important changed in stats and new info should be
 // shown to a user.
 void Search::MaybeOutputInfo() {
-  SharedMutex::Lock lock(nodes_mutex_);
+  SharedMutex::Lock nodes_lock(nodes_mutex_);
   Mutex::Lock counters_lock(counters_mutex_);
   if (!bestmove_is_sent_ && current_best_edge_ &&
       (current_best_edge_.edge() != last_outputted_info_edge_ ||
@@ -574,9 +574,15 @@ void Search::MaybeOutputInfo() {
       // SendMovesStats acquires nodes_mutex_ internally, but not counters_mutex_.
       // It accesses final_bestmove_ which should technically be guarded by counters_mutex_.
       // To avoid deadlock, we call it outside the counters_lock here.
-      lock.Unlock(); // Temporarily release counters_mutex_
-      SendMovesStats();
-      lock.Lock(); // Re-acquire counters_mutex_
+      // We need a temporary copy of final_bestmove_ accessed while counters_lock is held.
+      Move best_move_copy = final_bestmove_;
+      counters_lock.Unlock(); // Temporarily release counters_mutex_
+      nodes_lock.Unlock(); // Temporarily release nodes_mutex_
+
+      SendMovesStats(); // Now accesses the copy or re-acquires locks internally if needed
+
+      nodes_lock.Lock(); // Re-acquire nodes_mutex_
+      counters_lock.Lock(); // Re-acquire counters_mutex_
     }
     if (stop_.load(std::memory_order_acquire) && !ok_to_respond_bestmove_) {
       std::vector<ThinkingInfo> info(1);
@@ -940,9 +946,10 @@ void Search::SendMovesStats() const {
     move_stats = GetVerboseStats(root_node_); // Requires nodes_mutex_
 
     // Need counters_mutex to safely read final_bestmove_
-    Mutex::Lock counters_lock(counters_mutex_);
-    best_move_copy = final_bestmove_;
-    counters_lock.Unlock(); // Release counters lock after copy
+    { // Inner scope for counters_lock
+        Mutex::Lock counters_lock(counters_mutex_);
+        best_move_copy = final_bestmove_;
+    } // Release counters lock after copy
 
     // Find the edge corresponding to the best move (requires node lock)
     for (auto& edge : root_node_->Edges()) {
@@ -1006,36 +1013,72 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
   if (params_.GetNpsLimit() > 0) {
     hints->UpdateEstimatedNps(params_.GetNpsLimit());
   }
+
+  // Acquire locks in the correct order
   SharedMutex::Lock nodes_lock(nodes_mutex_);
-  Mutex::Lock lock(counters_mutex_);
+  Mutex::Lock counters_lock(counters_mutex_);
+
   // Already responded bestmove, nothing to do here.
   if (bestmove_is_sent_) return;
   // Don't stop when the root node is not yet expanded.
   if (total_playouts_ + initial_visits_ == 0) return;
 
+  bool should_stop = false;
   if (!stop_.load(std::memory_order_acquire)) {
-    if (stopper_->ShouldStop(stats, hints)) FireStopInternal();
+    if (stopper_->ShouldStop(stats, hints)) {
+        should_stop = true;
+        // Don't call FireStopInternal() while holding locks
+    }
   }
 
-  // If we are the first to see that stop is needed.
-  if (stop_.load(std::memory_order_acquire) && ok_to_respond_bestmove_ &&
-      !bestmove_is_sent_) {
-    SendUciInfo(); // Requires nodes_mutex_, counters_mutex_ (held by caller)
-    EnsureBestMoveKnown(); // Requires nodes_mutex_, counters_mutex_ (held by caller)
-    // Must release locks before calling SendMovesStats to avoid deadlock
-    lock.Unlock();
-    nodes_lock.Unlock();
-    SendMovesStats();
-    nodes_lock.Lock(); // Re-acquire
-    lock.Lock();       // Re-acquire
+  bool stop_fired = stop_.load(std::memory_order_acquire);
 
-    BestMoveInfo info(final_bestmove_, final_pondermove_); // Requires counters_mutex_
-    uci_responder_->OutputBestMove(&info);
-    stopper_->OnSearchDone(stats);
-    bestmove_is_sent_ = true;
-    current_best_edge_ = EdgeAndNode();
+  // If we decided to stop now OR stop was already fired externally
+  if (should_stop || stop_fired) {
+    // If we are the first to see that stop is needed and it's ok to respond.
+    if (ok_to_respond_bestmove_ && !bestmove_is_sent_) {
+      SendUciInfo(); // Requires nodes_mutex_, counters_mutex_ (held by caller)
+      EnsureBestMoveKnown(); // Requires nodes_mutex_, counters_mutex_ (held by caller)
+
+      // Release locks before calling SendMovesStats to avoid deadlock
+      Move best_move_copy = final_bestmove_;
+      Move ponder_move_copy = final_pondermove_;
+      counters_lock.Unlock();
+      nodes_lock.Unlock();
+
+      SendMovesStats(); // Now acquires locks internally if needed
+
+      // Reacquire locks if necessary (though not strictly needed for remaining actions here)
+      // nodes_lock.Lock();
+      // counters_lock.Lock();
+
+      BestMoveInfo info(best_move_copy, ponder_move_copy);
+      uci_responder_->OutputBestMove(&info);
+      stopper_->OnSearchDone(stats); // This likely doesn't need locks, but verify if changed
+
+      // Reacquire locks *before* modifying shared state
+      nodes_lock.Lock();
+      counters_lock.Lock();
+      bestmove_is_sent_ = true;
+      current_best_edge_ = EdgeAndNode();
+    }
+
+    // If stop should happen (either decided now or previously), fire the internal signal
+    // Must be done *after* releasing locks if other threads wait on the CV while holding locks
+    // but FireStopInternal just sets an atomic and notifies, so it should be safe here.
+    // However, doing it after lock release is safer pattern if unsure.
+     if (should_stop && !stop_fired) { // Only fire if *we* decided to stop now
+         // Release locks before notifying potentially waiting threads
+         counters_lock.Unlock();
+         nodes_lock.Unlock();
+         FireStopInternal();
+         // Locks are released, function returns
+         return;
+     }
   }
+  // Locks are released automatically by RAII guards if function exits here
 }
+
 
 // Return the evaluation of the actual best child, regardless of temperature
 // settings. This differs from GetBestMove, which does obey any temperature
@@ -3273,3 +3316,4 @@ void SearchWorker::UpdateCounters() {
 }
 
 }  // namespace lczero
+
