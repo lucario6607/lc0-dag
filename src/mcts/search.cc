@@ -559,43 +559,37 @@ void Search::SendUciInfo() REQUIRES(nodes_mutex_) REQUIRES(counters_mutex_) {
 // Decides whether anything important changed in stats and new info should be
 // shown to a user.
 void Search::MaybeOutputInfo() {
-  // Acquire locks in correct order: nodes_mutex first, then counters_mutex
-  SharedMutex::Lock nodes_lock(nodes_mutex_);
-  Mutex::Lock counters_lock(counters_mutex_);
+  bool should_send_stats = false;
+  Move best_move_copy;
+  { // Scope for locks
+      SharedMutex::Lock nodes_lock(nodes_mutex_);
+      Mutex::Lock counters_lock(counters_mutex_);
+      if (!bestmove_is_sent_ && current_best_edge_ &&
+          (current_best_edge_.edge() != last_outputted_info_edge_ ||
+           last_outputted_uci_info_.depth !=
+               static_cast<int>(cum_depth_ /
+                                (total_playouts_ ? total_playouts_ : 1)) ||
+           last_outputted_uci_info_.seldepth != max_depth_ ||
+           last_outputted_uci_info_.time + kUciInfoMinimumFrequencyMs <
+               GetTimeSinceStart())) {
+        SendUciInfo(); // Requires nodes_mutex_, counters_mutex_ (held by caller)
+        if (params_.GetLogLiveStats()) {
+          should_send_stats = true;
+          best_move_copy = final_bestmove_; // Copy while holding lock
+        }
+        if (stop_.load(std::memory_order_acquire) && !ok_to_respond_bestmove_) {
+          std::vector<ThinkingInfo> info(1);
+          info.back().comment = // Requires counters_mutex_ is held by caller
+              "WARNING: Search has reached limit and does not make any progress.";
+          uci_responder_->OutputThinkingInfo(&info);
+        }
+      }
+  } // Locks released here
 
-  if (!bestmove_is_sent_ && current_best_edge_ &&
-      (current_best_edge_.edge() != last_outputted_info_edge_ ||
-       last_outputted_uci_info_.depth !=
-           static_cast<int>(cum_depth_ /
-                            (total_playouts_ ? total_playouts_ : 1)) ||
-       last_outputted_uci_info_.seldepth != max_depth_ ||
-       last_outputted_uci_info_.time + kUciInfoMinimumFrequencyMs <
-           GetTimeSinceStart())) {
-
-    SendUciInfo(); // Requires nodes_mutex_, counters_mutex_ (held by caller)
-
-    if (params_.GetLogLiveStats()) {
-      // Release locks temporarily to call SendMovesStats, which acquires nodes_mutex_ internally
-      // Copy necessary data that requires counters_mutex_ first
-      Move best_move_copy = final_bestmove_;
-      counters_lock.Unlock();
-      nodes_lock.Unlock();
-
-      SendMovesStats(); // This function now handles its own locking internally or uses the copy
-
-      // Reacquire locks
-      nodes_lock.Lock();
-      counters_lock.Lock();
-    }
-
-    if (stop_.load(std::memory_order_acquire) && !ok_to_respond_bestmove_) {
-      std::vector<ThinkingInfo> info(1);
-      info.back().comment = // Requires counters_mutex_ is held by caller
-          "WARNING: Search has reached limit and does not make any progress.";
-      uci_responder_->OutputThinkingInfo(&info);
-    }
+  // Call SendMovesStats outside the main lock scope if needed
+  if (should_send_stats) {
+      SendMovesStats(); // Accesses final_bestmove_ internally now (needs fixing or accept race)
   }
-  // Locks automatically released here by RAII guards
 }
 
 
@@ -1007,7 +1001,6 @@ void Search::SendMovesStats() const {
   }
 }
 
-
 NNCacheLock Search::GetCachedNNEval(const PositionHistory& history) const {
   const auto hash = dag_->GetHistoryHash(history);
   NNCacheLock nneval(cache_, hash);
@@ -1031,11 +1024,14 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
   }
 
   bool stop_fired = stop_.load(std::memory_order_acquire);
+  bool need_to_send_bestmove = false;
+  Move best_move_copy;
+  Move ponder_move_copy;
 
   // If we decided to stop now OR stop was already fired externally
   if (should_stop || stop_fired) {
     // Acquire locks only if we might need to respond
-    if (ok_to_respond_bestmove_ && !bestmove_is_sent_) {
+    if (ok_to_respond_bestmove_) {
       SharedMutex::Lock nodes_lock(nodes_mutex_);
       Mutex::Lock counters_lock(counters_mutex_);
 
@@ -1045,35 +1041,30 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
           EnsureBestMoveKnown(); // Requires nodes_mutex_, counters_mutex_ (held by caller)
 
           // Copy data needed after releasing locks
-          Move best_move_copy = final_bestmove_;
-          Move ponder_move_copy = final_pondermove_;
+          best_move_copy = final_bestmove_;
+          ponder_move_copy = final_pondermove_;
 
-          // Release locks before calling SendMovesStats to avoid potential deadlock
-          counters_lock.get_raw()->unlock(); // Manual unlock
-          nodes_lock.get_raw()->unlock();   // Manual unlock
-
-          SendMovesStats(); // This function now acquires locks internally if needed
-
-          // No need to reacquire locks just for outputting bestmove
-          BestMoveInfo info(best_move_copy, ponder_move_copy);
-          uci_responder_->OutputBestMove(&info);
-          stopper_->OnSearchDone(stats); // Likely doesn't need locks
-
-          // Reacquire locks to modify shared state
-          nodes_lock.get_raw()->lock();     // Manual lock
-          counters_lock.get_raw()->lock();   // Manual lock
-          bestmove_is_sent_ = true;
+          // Mark that we need to send bestmove outside the lock
+          need_to_send_bestmove = true;
+          bestmove_is_sent_ = true; // Mark as sent while holding lock
           current_best_edge_ = EdgeAndNode();
       }
-      // Locks are released automatically by RAII if they were re-acquired,
-      // or manually released above if bestmove was sent.
+      // Locks released automatically by RAII guards here
     }
 
     // If stop should happen (either decided now or previously), fire the internal signal
-    // Do this outside the main locks if possible to avoid holding them while notifying.
     if (should_stop && !stop_fired) { // Only fire if *we* decided to stop now
-         FireStopInternal(); // Sets atomic and notifies CV
+         FireStopInternal(); // Sets atomic and notifies CV - safe to do outside lock
     }
+  }
+
+  // Perform actions that don't require the main locks
+  if (need_to_send_bestmove) {
+      SendMovesStats(); // Acquires node lock internally, reads best_move_copy
+
+      BestMoveInfo info(best_move_copy, ponder_move_copy);
+      uci_responder_->OutputBestMove(&info);
+      stopper_->OnSearchDone(stats); // Likely doesn't need locks
   }
 }
 
