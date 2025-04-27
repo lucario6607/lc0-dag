@@ -765,14 +765,17 @@ std::vector<std::string> Search::GetVerboseStats(Node* node) const {
   std::vector<EdgeAndNode> edges;
   for (const auto& edge : node->Edges()) edges.push_back(edge);
 
-  std::partial_sort( // Use partial_sort if only top N are needed later
-      edges.begin(), edges.end(),
-      [&fpu, &U_coeff, &draw_score](EdgeAndNode a, EdgeAndNode b) {
-        return std::forward_as_tuple(
-                   a.GetWeight(), a.GetQ(fpu, draw_score) + a.GetU(U_coeff)) <
-               std::forward_as_tuple(b.GetWeight(),
-                                     b.GetQ(fpu, draw_score) + b.GetU(U_coeff));
-      });
+  // Define the comparison lambda
+  auto compare_edges = [&fpu, &U_coeff, &draw_score](EdgeAndNode a, EdgeAndNode b) {
+    return std::forward_as_tuple(
+               a.GetWeight(), a.GetQ(fpu, draw_score) + a.GetU(U_coeff)) <
+           std::forward_as_tuple(b.GetWeight(),
+                                 b.GetQ(fpu, draw_score) + b.GetU(U_coeff));
+  };
+
+  // Use std::sort instead of std::partial_sort for full sorting
+  std::sort(edges.begin(), edges.end(), compare_edges);
+
 
   auto print = [](auto* oss, auto pre, auto v, auto post, auto w, int p = 0) {
     *oss << pre << std::setw(w) << std::setprecision(p) << v << post;
@@ -2681,7 +2684,7 @@ void SearchWorker::FetchMinibatchResults() {
 template <typename Computation>
 void SearchWorker::FetchSingleNodeResult(NodeToProcess* node_to_process,
                                          const Computation& computation,
-                                         int idx_in_computation)
+                                         int idx_in_computation [[maybe_unused]])
     REQUIRES(search_->nodes_mutex_) {
   if (!node_to_process || !node_to_process->node) return; // Check validity
   if (!node_to_process->nn_queried) return;
@@ -3091,7 +3094,7 @@ void SearchWorker::DoBackupUpdateSingleNode(
 bool SearchWorker::MaybeSetBounds(Node* p, float m, uint32_t* n_to_fix,
                                   float* weight_to_fix, float* v_delta,
                                   float* d_delta, float* m_delta,
-                                  float* vs_delta [[maybe_unused]]) const { // Added [[maybe_unused]]
+                                  float* vs_delta [[maybe_unused]]) const {
    if (!p) return false; // Check parent validity
 
   auto losing_m = 0.0f;
@@ -3191,4 +3194,3 @@ void SearchWorker::UpdateCounters() {
 }
 
 }  // namespace lczero
-
