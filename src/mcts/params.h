@@ -37,26 +37,10 @@ enum class ContemptMode { PLAY, WHITE, BLACK, NONE };
 
 class SearchParams {
  public:
-  float GetRootBeamMaxWidth() const { 
-    if (options_.Exists(kRootBeamMaxWidthId)) {
-      return options_.Get<float>(kRootBeamMaxWidthId); 
-    }
-    return root_beam_max_width_;
-  }
-
-  float GetRootBeamUpdateIntervalFactor() const { 
-    if (options_.Exists(kRootBeamUpdateIntervalFactorId)) {
-      return options_.Get<float>(kRootBeamUpdateIntervalFactorId); 
-    }
-    return root_beam_update_interval_factor_;
-  }
-
-  int GetRootBeamWidthStepVisits() const { 
-    if (options_.Exists(kRootBeamWidthStepVisitsId)) {
-      return options_.Get<int>(kRootBeamWidthStepVisitsId); 
-    }
-    return root_beam_width_step_visits_;
-  }
+  // --- START ROOT BEAM SEARCH RELATED GETTERS (REMOVED OBSOLETE ONES) ---
+  // Removed GetRootBeamMaxWidth, GetRootBeamUpdateIntervalFactor, GetRootBeamWidthStepVisits
+  // as their OptionIds and corresponding logic were removed or incomplete.
+  // --- END ROOT BEAM SEARCH RELATED GETTERS ---
 
   SearchParams(const OptionsDict& options);
   SearchParams(const SearchParams&) = delete;
@@ -187,11 +171,11 @@ class SearchParams {
   float GetCpuctUncertaintyMinFactor() const { return kCpuctUncertaintyMinFactor; }
   float GetCpuctUncertaintyMaxFactor() const { return kCpuctUncertaintyMaxFactor; }
   float GetCpuctUncertaintyMinUncertainty() const { return kCpuctUncertaintyMinUncertainty; }
-  float GetCpuctUncertaintyMaxUncertainty() const {
+	float GetCpuctUncertaintyMaxUncertainty() const {
     return kCpuctUncertaintyMaxUncertainty;
   }
   bool GetUseCpuctUncertainty() const { return kUseCpuctUncertainty; }
-  bool GetJustFpuUncertainty() const { return kJustFpuUncertainty; }
+	bool GetJustFpuUncertainty() const { return kJustFpuUncertainty; }
 
   bool GetUseVarianceScaling() const { return kUseVarianceScaling; }
   bool GetMoveRuleBucketing() const { return kMoveRuleBucketing; }
@@ -199,8 +183,8 @@ class SearchParams {
     return options_.Get<std::string>(kReportedNodesId);
   }
   float GetUncertaintyWeightingCap() const {
-    return kUncertaintyWeightingCap;
-  }
+		return kUncertaintyWeightingCap;
+	}
   float GetUncertaintyWeightingCoefficient() const {
     return kUncertaintyWeightingCoefficient;
   }
@@ -221,7 +205,7 @@ class SearchParams {
   float GetPolicyDecayExponent() const { return kPolicyDecayExponent; }
   float GetPolicyDecayFactor() const { return kPolicyDecayFactor; }
 
-  float GetTopPolicyBoost() const { return kTopPolicyBoost; }  
+	float GetTopPolicyBoost() const { return kTopPolicyBoost; }
   int GetTopPolicyNumBoost() const { return kTopPolicyNumBoost; }
   float GetTopPolicyTierTwoBoost() const { return kTopPolicyTierTwoBoost; }
   int GetTopPolicyTierTwoNumBoost() const { return kTopPolicyTierTwoNumBoost; }
@@ -235,12 +219,7 @@ class SearchParams {
 
   // --- Root Beam Search Getters for cached values ---
   int GetRootBeamWidth() const { return kRootBeamWidth; }
-  int GetRootBeamUpdateThreshold() const { 
-    if (options_.Exists(kRootBeamUpdateThresholdId)) {
-      return options_.Get<int>(kRootBeamUpdateThresholdId); 
-    }
-    return kRootBeamUpdateThreshold;
-  }
+  int GetRootBeamUpdateThreshold() const { return kRootBeamUpdateThreshold; }
   // --- END Root Beam Search Getters ---
 
   // Search parameter IDs.
@@ -346,19 +325,13 @@ class SearchParams {
   static const OptionId kUseCorrectionHistoryId;
   static const OptionId kCorrectionHistoryAlphaId;
   static const OptionId kCorrectionHistoryLambdaId;
-  
+
   // --- Root Beam Search ADDED ---
   static const OptionId kRootBeamWidthId;
   static const OptionId kRootBeamUpdateThresholdId;
-  static const OptionId kRootBeamMaxWidthId;
-  static const OptionId kRootBeamUpdateIntervalFactorId;
-  static const OptionId kRootBeamWidthStepVisitsId;
   // --- END Root Beam Search ADDED ---
 
  private:
-  const float root_beam_max_width_ = 0.0f;
-  const float root_beam_update_interval_factor_ = 1.5f;
-  const int root_beam_width_step_visits_ = 1000;
   const OptionsDict& options_;
   // Cached parameter values. Values have to be cached if either:
   // 1. Parameter is accessed often and has to be cached for performance reasons.
@@ -433,7 +406,7 @@ class SearchParams {
   const bool kJustFpuUncertainty;
   const float kPolicyDecayExponent;
   const float kPolicyDecayFactor;
-  const float kTopPolicyBoost;
+	const float kTopPolicyBoost;
   const int kTopPolicyNumBoost;
   const float kTopPolicyTierTwoBoost;
   const int kTopPolicyTierTwoNumBoost;
