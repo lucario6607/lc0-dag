@@ -501,14 +501,14 @@ class LowNode {
         e_(p.e_),
         ch_hash_(p.ch_hash_),
         cht_entry_(p.cht_entry_),
-        ch_delta_(p.ch_delta_), // Added ch_delta_
+        ch_delta_(p.ch_delta_),
         num_edges_(p.num_edges_),
         terminal_type_(Terminal::NonTerminal),
         lower_bound_(GameResult::BLACK_WON),
         upper_bound_(GameResult::WHITE_WON),
         is_transposition(false),
         is_tt_(false),
-        is_twin_(p.is_twin_) // Added is_twin_
+        is_twin_(p.is_twin_)
         {
     assert(p.edges_);
     edges_ = std::make_unique<Edge[]>(num_edges_);
@@ -1156,4 +1156,5 @@ class NodeTree {
   GCQueue gc_queue_;
 };
 
+}  // namespace lczero
 }  // namespace lczero
