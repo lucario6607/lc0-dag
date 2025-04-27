@@ -742,6 +742,7 @@ void SearchParams::Populate(OptionsParser* options) {
 
 SearchParams::SearchParams(const OptionsDict& options)
     : options_(options),
+      // --- Standard Search Params ---
       kCpuct(options.Get<float>(kCpuctId)),
       kCpuctAtRoot(options.Get<float>(
           options.Get<bool>(kRootHasOwnCpuctParamsId) ? kCpuctAtRootId
@@ -805,6 +806,7 @@ SearchParams::SearchParams(const OptionsDict& options)
                     options.Get<float>(kWDLCalibrationEloId),
                     options.Get<float>(kContemptMaxValueId),
                     options.Get<float>(kWDLContemptAttenuationId))),
+      // --- WDL Related ---
       kWDLEvalObjectivity(options.Get<float>(kWDLEvalObjectivityId)),
       kMaxOutOfOrderEvals(std::max(
           1, static_cast<int>(options.Get<float>(kMaxOutOfOrderEvalsId) *
@@ -828,6 +830,7 @@ SearchParams::SearchParams(const OptionsDict& options)
           options.Get<int>(kMaxCollisionVisitsScalingEndId)),
       kMaxCollisionVisitsScalingPower(
           options.Get<float>(kMaxCollisionVisitsScalingPowerId)),
+      // --- CPUCT Variance/Uncertainty/Desperation/Boosting/Decay ---
       kCpuctUtilityStdevPrior(options.Get<float>(kCpuctUtilityStdevPriorId)),
       kCpuctUtilityStdevScale(options.Get<float>(kCpuctUtilityStdevScaleId)),
       kCpuctUtilityStdevPriorWeight(
@@ -835,7 +838,6 @@ SearchParams::SearchParams(const OptionsDict& options)
       kUseVarianceScaling(options.Get<bool>(kUseVarianceScalingId)),
       kMoveRuleBucketing(options.Get<bool>(kMoveRuleBucketingId)),
       kUncertaintyWeightingCap(options.Get<float>(kUncertaintyWeightingCapId)),
-      // --- CPUCT Variance/Uncertainty/Desperation/Boosting/Decay ---
       kUncertaintyWeightingCoefficient(
           options.Get<float>(kUncertaintyWeightingCoefficientId)),
       kUncertaintyWeightingExponent(
@@ -849,7 +851,7 @@ SearchParams::SearchParams(const OptionsDict& options)
       kJustFpuUncertainty(options.Get<bool>(kJustFpuUncertaintyId)),
       kPolicyDecayExponent(options.Get<float>(kPolicyDecayExponentId)),
       kPolicyDecayFactor(options.Get<float>(kPolicyDecayFactorId)),
-      kTopPolicyBoost(options.Get<float>(kTopPolicyBoostId)),
+			kTopPolicyBoost(options.Get<float>(kTopPolicyBoostId)),
       kTopPolicyNumBoost(options.Get<int>(kTopPolicyNumBoostId)),
       kTopPolicyTierTwoBoost(options.Get<float>(kTopPolicyTierTwoBoostId)),
       kTopPolicyTierTwoNumBoost(options.Get<int>(kTopPolicyTierTwoNumBoostId)),
@@ -860,12 +862,11 @@ SearchParams::SearchParams(const OptionsDict& options)
       kDesperationPriorWeight(options.Get<float>(kDesperationPriorWeightId)),
       kUseDesperation(options.Get<bool>(kUseDesperationId)),
       // --- Other ---
-      kEasyEvalWeightDecay(options.Get<float>(kEasyEvalWeightDecayId)), // Moved earlier
-      kSearchSpinBackoff(options_.Get<bool>(kSearchSpinBackoffId)), // Moved earlier
+      kEasyEvalWeightDecay(options.Get<float>(kEasyEvalWeightDecayId)),
+      kSearchSpinBackoff(options_.Get<bool>(kSearchSpinBackoffId)),
       kUseCorrectionHistory(options.Get<bool>(kUseCorrectionHistoryId)),
       kCorrectionHistoryAlpha(options.Get<float>(kCorrectionHistoryAlphaId)),
-      kCorrectionHistoryLambda(options.Get<float>(kCorrectionHistoryLambdaId)), // Moved earlier
-
+      kCorrectionHistoryLambda(options.Get<float>(kCorrectionHistoryLambdaId)),
       // --- Root Beam Search Cached Members ---
       kRootBeamWidth(options.Get<int>(kRootBeamWidthId)),
       kRootBeamUpdateThreshold(options.Get<int>(kRootBeamUpdateThresholdId))
