@@ -139,7 +139,8 @@ class Search {
   // Sets stop to true and notifies watchdog thread.
   void FireStopInternal();
 
-  void SendMovesStats() const;
+  // Pass best move to avoid needing counters_mutex_ internally.
+  void SendMovesStats(Move best_move_from_caller) const;
   // Function which runs in a separate thread and watches for time and
   // uci `stop` command;
   void WatchdogThread();
