@@ -1,4 +1,3 @@
-```cpp
 /*
   This file is part of Leela Chess Zero.
   Copyright (C) 2018-2019 The LCZero Authors
