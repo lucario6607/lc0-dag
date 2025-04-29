@@ -559,8 +559,13 @@ void Search::SendUciInfo() REQUIRES(nodes_mutex_) REQUIRES(counters_mutex_) {
 // Decides whether anything important changed in stats and new info should be
 // shown to a user.
 void Search::MaybeOutputInfo() {
+  Move best_move_copy; // Copy needed for SendMovesStats
+  bool should_send_stats = false;
+
+  // Acquire locks in correct order
   SharedMutex::Lock nodes_lock(nodes_mutex_);
   Mutex::Lock counters_lock(counters_mutex_);
+
   if (!bestmove_is_sent_ && current_best_edge_ &&
       (current_best_edge_.edge() != last_outputted_info_edge_ ||
        last_outputted_uci_info_.depth !=
@@ -568,32 +573,30 @@ void Search::MaybeOutputInfo() {
                             (total_playouts_ ? total_playouts_ : 1)) ||
        last_outputted_uci_info_.seldepth != max_depth_ ||
        last_outputted_uci_info_.time + kUciInfoMinimumFrequencyMs <
-           GetTimeSinceStart())) {
-    SendUciInfo(); // Requires nodes_mutex_, counters_mutex_ (acquired by caller)
-    if (params_.GetLogLiveStats()) {
-      // SendMovesStats needs nodes_mutex_ (held) and accesses final_bestmove_ (needs counters_mutex_, held).
-      // The lock order is correct here (nodes -> counters).
-      // However, SendMovesStats itself might acquire locks internally.
-      // To be absolutely safe, capture needed state and call outside locks.
-      Move best_move_copy = final_bestmove_; // Access requires counters_lock
-      // We need to release locks to call SendMovesStats if it acquires locks internally
-      counters_lock.unlock();
-      nodes_lock.unlock();
+           GetTimeSinceStart()))
+  {
+      SendUciInfo(); // Requires both locks held
+      if (params_.GetLogLiveStats()) {
+          should_send_stats = true;
+          best_move_copy = final_bestmove_; // Copy while holding counters_lock
+      }
+      if (stop_.load(std::memory_order_acquire) && !ok_to_respond_bestmove_) {
+          std::vector<ThinkingInfo> info(1);
+          info.back().comment = // Requires counters_mutex_ is held by caller
+              "WARNING: Search has reached limit and does not make any progress.";
+          uci_responder_->OutputThinkingInfo(&info);
+      }
+  }
 
-      SendMovesStats(best_move_copy); // Pass the needed info
+  // Release locks *before* calling SendMovesStats if it needs to be called
+  counters_lock.unlock();
+  nodes_lock.unlock();
 
-      // Reacquire locks if needed by subsequent code (though none here)
-      nodes_lock.lock();
-      counters_lock.lock();
-    }
-    if (stop_.load(std::memory_order_acquire) && !ok_to_respond_bestmove_) {
-      std::vector<ThinkingInfo> info(1);
-      info.back().comment = // Requires counters_mutex_ is held by caller
-          "WARNING: Search has reached limit and does not make any progress.";
-      uci_responder_->OutputThinkingInfo(&info);
-    }
+  if (should_send_stats) {
+      SendMovesStats(best_move_copy); // Call outside locks, passing necessary data
   }
 }
+
 
 int64_t Search::GetTimeSinceStart() const {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -935,7 +938,8 @@ std::vector<std::string> Search::GetVerboseStats(Node* node) const {
   return infos;
 }
 
-void Search::SendMovesStats(Move best_move_copy) const { // Accept best move as arg
+// Changed signature to accept best_move_copy
+void Search::SendMovesStats(Move best_move_copy) const {
   // 1. Get verbose stats data under the node lock first.
   std::vector<std::string> move_stats;
   std::string opponent_moves_header;
@@ -1010,14 +1014,14 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
     hints->UpdateEstimatedNps(params_.GetNpsLimit());
   }
 
-  // Acquire locks in the correct order
-  SharedMutex::Lock nodes_lock(nodes_mutex_);
-  Mutex::Lock counters_lock(counters_mutex_);
+  // Use std::unique_lock for manual unlocking/relocking if needed
+  std::unique_lock<SharedMutex> nodes_lock(nodes_mutex_);
+  std::unique_lock<Mutex> counters_lock(counters_mutex_);
 
   // Already responded bestmove, nothing to do here.
-  if (bestmove_is_sent_) return;
+  if (bestmove_is_sent_) return; // RAII locks released automatically
   // Don't stop when the root node is not yet expanded.
-  if (total_playouts_ + initial_visits_ == 0) return;
+  if (total_playouts_ + initial_visits_ == 0) return; // RAII locks released automatically
 
   bool should_stop = false;
   if (!stop_.load(std::memory_order_acquire)) {
@@ -1041,22 +1045,23 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
       Move ponder_move_copy = final_pondermove_;
 
       // Release locks before calling SendMovesStats to avoid deadlock potential
-      // Since SendMovesStats now acquires nodes_mutex_ internally, we only need to release locks here.
-      counters_lock.unlock(); // Use std::unique_lock if RAII unlock/relock is preferred
+      counters_lock.unlock();
       nodes_lock.unlock();
 
       SendMovesStats(best_move_copy); // Call the corrected function with the necessary argument
 
-      // Reacquire locks *before* modifying shared state or calling functions needing them
-      nodes_lock.lock();
-      counters_lock.lock();
+      // SendMovesStats finished, we can continue without re-acquiring locks for remaining actions here
 
-      BestMoveInfo info(best_move_copy, ponder_move_copy); // Now safe to use copies
+      BestMoveInfo info(best_move_copy, ponder_move_copy); // Use copies
       uci_responder_->OutputBestMove(&info);
       stopper_->OnSearchDone(stats); // This likely doesn't need locks, but verify if changed
 
+      // Reacquire locks *only* to modify shared state safely
+      nodes_lock.lock();
+      counters_lock.lock();
       bestmove_is_sent_ = true; // Requires counters_mutex_
       current_best_edge_ = EdgeAndNode(); // Requires nodes_mutex_
+      // Locks will be released automatically by RAII when function returns
     }
 
     // If stop should happen (either decided now or previously), fire the internal signal
@@ -2127,7 +2132,7 @@ void SearchWorker::PickNodesToExtendTask(
   bool is_root_node = node == search_->root_node_;
   const float even_draw_score = search_->GetDrawScore(false);
   const float odd_draw_score = search_->GetDrawScore(true);
-  const auto& root_move_filter = search_->root_move_filter_;
+  const auto& root_move_filter = search_->root_move_filter; // Corrected variable name
   auto m_evaluator = moves_left_support_ ? MEvaluator(params_) : MEvaluator();
 
   int max_limit = std::numeric_limits<int>::max();
@@ -2376,7 +2381,7 @@ void SearchWorker::PickNodesToExtendTask(
                 }
 
                 // Apply root move filter
-                if (is_root_node && !root_move_filter.empty() &&         // Corrected variable name
+                if (is_root_node && !root_move_filter.empty() &&
                     std::find(root_move_filter.begin(), root_move_filter.end(),
                             cur_iters[idx].GetMove()) == root_move_filter.end()) {
                    continue;
