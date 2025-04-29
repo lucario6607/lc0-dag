@@ -1,14 +1,3 @@
-
-You are persistent, and you've caught my mistake again! I apologize for the repeated errors with the lock guards and the typo.
-
-1.  **Lock Guard `unlock`/`lock`:** I incorrectly tried to use `unlock()` and `lock()` on the `std::unique_lock` objects (`counters_lock` and `nodes_lock`). `std::unique_lock` *does* have these methods (unlike `std::lock_guard`), but my usage pattern was still flawed, leading to the same errors. The RAII approach of letting the locks go out of scope is the correct way to release them temporarily.
-2.  **`root_move_filter` Typo:** I introduced a typo in `PickNodesToExtendTask`, removing the necessary trailing underscore from `root_move_filter_`.
-
-Let's fix these in `search.cc`.
-
-**Corrected `src/mcts/search.cc`**
-
-```cpp
 /*
   This file is part of Leela Chess Zero.
   Copyright (C) 2018-2019 The LCZero Authors
@@ -58,6 +47,7 @@ Let's fix these in `search.cc`.
 
 // Added for std::iota which was missing include
 #include <numeric>
+#include <cstddef> // Added for size_t
 
 namespace lczero {
 
@@ -574,35 +564,33 @@ void Search::MaybeOutputInfo() {
   bool should_send_stats = false;
   bool should_warn_limit = false;
 
-  // Acquire locks in correct order
-  SharedMutex::Lock nodes_lock(nodes_mutex_);
-  Mutex::Lock counters_lock(counters_mutex_);
+  { // Scope for locks
+      SharedMutex::Lock nodes_lock(nodes_mutex_);
+      Mutex::Lock counters_lock(counters_mutex_);
 
-  if (!bestmove_is_sent_ && current_best_edge_ &&
-      (current_best_edge_.edge() != last_outputted_info_edge_ ||
-       last_outputted_uci_info_.depth !=
-           static_cast<int>(cum_depth_ /
-                            (total_playouts_ ? total_playouts_ : 1)) ||
-       last_outputted_uci_info_.seldepth != max_depth_ ||
-       last_outputted_uci_info_.time + kUciInfoMinimumFrequencyMs <
-           GetTimeSinceStart()))
-  {
-      SendUciInfo(); // Requires both locks held
-      if (params_.GetLogLiveStats()) {
-          should_send_stats = true;
-          best_move_copy = final_bestmove_; // Copy while holding counters_lock
+      if (!bestmove_is_sent_ && current_best_edge_ &&
+          (current_best_edge_.edge() != last_outputted_info_edge_ ||
+           last_outputted_uci_info_.depth !=
+               static_cast<int>(cum_depth_ /
+                                (total_playouts_ ? total_playouts_ : 1)) ||
+           last_outputted_uci_info_.seldepth != max_depth_ ||
+           last_outputted_uci_info_.time + kUciInfoMinimumFrequencyMs <
+               GetTimeSinceStart()))
+      {
+          SendUciInfo(); // Requires both locks held
+          if (params_.GetLogLiveStats()) {
+              should_send_stats = true;
+              best_move_copy = final_bestmove_; // Copy while holding counters_lock
+          }
+          if (stop_.load(std::memory_order_acquire) && !ok_to_respond_bestmove_) {
+              should_warn_limit = true;
+          }
       }
-      if (stop_.load(std::memory_order_acquire) && !ok_to_respond_bestmove_) {
-          should_warn_limit = true;
-      }
-  }
+  } // Locks released here by RAII
 
-  // Release locks *before* calling SendMovesStats or OutputThinkingInfo
-  counters_lock.unlock();
-  nodes_lock.unlock();
-
+  // Call functions requiring fewer locks outside the main scope
   if (should_send_stats) {
-      SendMovesStats(best_move_copy); // Call outside locks, passing necessary data
+      SendMovesStats(best_move_copy); // Pass the needed info
   }
   if (should_warn_limit) {
        std::vector<ThinkingInfo> info(1);
@@ -1029,7 +1017,7 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
     hints->UpdateEstimatedNps(params_.GetNpsLimit());
   }
 
-  // Use std::unique_lock for manual unlocking/relocking if needed
+  // Use std::unique_lock for potential manual unlocking/relocking
   std::unique_lock<SharedMutex> nodes_lock(nodes_mutex_);
   std::unique_lock<Mutex> counters_lock(counters_mutex_);
 
@@ -1038,37 +1026,34 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
   // Don't stop when the root node is not yet expanded.
   if (total_playouts_ + initial_visits_ == 0) return; // RAII locks released automatically
 
-  bool should_stop = false;
+  bool should_stop_now = false; // Flag to indicate if *this* call triggered stop decision
   if (!stop_.load(std::memory_order_acquire)) {
     if (stopper_->ShouldStop(stats, hints)) {
-        should_stop = true;
+        should_stop_now = true;
         // Don't call FireStopInternal() while holding locks
     }
   }
 
-  bool stop_fired = stop_.load(std::memory_order_acquire);
+  bool stop_already_fired = stop_.load(std::memory_order_acquire);
 
-  // If we decided to stop now OR stop was already fired externally
-  if (should_stop || stop_fired) {
+  // If stop should happen (either decided now or previously fired)
+  if (should_stop_now || stop_already_fired) {
     // If we are the first to see that stop is needed and it's ok to respond.
     if (ok_to_respond_bestmove_ && !bestmove_is_sent_) {
-      SendUciInfo(); // Requires nodes_mutex_, counters_mutex_ (held by caller)
-      EnsureBestMoveKnown(); // Requires nodes_mutex_, counters_mutex_ (held by caller)
+      SendUciInfo(); // Requires both locks held
+      EnsureBestMoveKnown(); // Requires both locks held
 
       // Local copies needed before releasing locks
       Move best_move_copy = final_bestmove_;
       Move ponder_move_copy = final_pondermove_;
 
       // Release locks before calling SendMovesStats to avoid deadlock potential
-      // Use RAII idiom by creating a smaller scope for locks if needed,
-      // or simply let the lock guards go out of scope if possible.
-      counters_lock.unlock(); // Manual unlock (use std::unique_lock if possible)
-      nodes_lock.unlock();   // Manual unlock
+      counters_lock.unlock();
+      nodes_lock.unlock();
 
       SendMovesStats(best_move_copy); // Call the corrected function with the necessary argument
 
-      // SendMovesStats finished, we can continue without re-acquiring locks for remaining actions here
-
+      // Actions after SendMovesStats that don't need locks immediately
       BestMoveInfo info(best_move_copy, ponder_move_copy); // Use copies
       uci_responder_->OutputBestMove(&info);
       stopper_->OnSearchDone(stats); // This likely doesn't need locks, but verify if changed
@@ -1078,11 +1063,11 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
       counters_lock.lock();
       bestmove_is_sent_ = true; // Requires counters_mutex_
       current_best_edge_ = EdgeAndNode(); // Requires nodes_mutex_
-      // Locks will be released automatically by RAII when function returns
+      // Let RAII release locks at the end of the scope
     }
 
-    // If stop should happen (either decided now or previously), fire the internal signal
-     if (should_stop && !stop_fired) { // Only fire if *we* decided to stop now
+     // If *this* call decided to stop, fire the internal signal *after* potential bestmove response
+     if (should_stop_now && !stop_already_fired) {
          // Release locks before notifying potentially waiting threads
          counters_lock.unlock();
          nodes_lock.unlock();
@@ -3331,4 +3316,3 @@ void SearchWorker::UpdateCounters() {
 }
 
 }  // namespace lczero
-
