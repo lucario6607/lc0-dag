@@ -571,11 +571,20 @@ void Search::MaybeOutputInfo() {
            GetTimeSinceStart())) {
     SendUciInfo(); // Requires nodes_mutex_, counters_mutex_ (acquired by caller)
     if (params_.GetLogLiveStats()) {
-      // SendMovesStats acquires nodes_mutex_ internally.
-      // Release counters_mutex_ before calling it to avoid potential inversion.
-      counters_lock.Unlock(); // Temporarily release counters_mutex_
-      SendMovesStats();
-      counters_lock.Lock(); // Re-acquire counters_mutex_
+      // SendMovesStats needs nodes_mutex_ (held) and accesses final_bestmove_ (needs counters_mutex_, held).
+      // The lock order is correct here (nodes -> counters).
+      // However, SendMovesStats itself might acquire locks internally.
+      // To be absolutely safe, capture needed state and call outside locks.
+      Move best_move_copy = final_bestmove_; // Access requires counters_lock
+      // We need to release locks to call SendMovesStats if it acquires locks internally
+      counters_lock.unlock();
+      nodes_lock.unlock();
+
+      SendMovesStats(best_move_copy); // Pass the needed info
+
+      // Reacquire locks if needed by subsequent code (though none here)
+      nodes_lock.lock();
+      counters_lock.lock();
     }
     if (stop_.load(std::memory_order_acquire) && !ok_to_respond_bestmove_) {
       std::vector<ThinkingInfo> info(1);
@@ -585,7 +594,6 @@ void Search::MaybeOutputInfo() {
     }
   }
 }
-
 
 int64_t Search::GetTimeSinceStart() const {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -927,23 +935,16 @@ std::vector<std::string> Search::GetVerboseStats(Node* node) const {
   return infos;
 }
 
-void Search::SendMovesStats() const {
+void Search::SendMovesStats(Move best_move_copy) const { // Accept best move as arg
   // 1. Get verbose stats data under the node lock first.
   std::vector<std::string> move_stats;
   std::string opponent_moves_header;
   std::vector<std::string> opponent_moves_stats;
-  Move best_move_copy; // Copy best move under lock if needed for header
   {
     SharedMutex::Lock nodes_lock(nodes_mutex_); // Acquire node lock
     if (!root_node_) return; // Check root node validity
 
     move_stats = GetVerboseStats(root_node_); // Requires nodes_mutex_
-
-    // Need counters_mutex to safely read final_bestmove_
-    { // Inner scope for counters_lock
-        Mutex::Lock counters_lock(counters_mutex_);
-        best_move_copy = final_bestmove_;
-    } // Release counters lock after copy
 
     // Find the edge corresponding to the best move (requires node lock)
     for (auto& edge : root_node_->Edges()) {
@@ -1040,13 +1041,11 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
       Move ponder_move_copy = final_pondermove_;
 
       // Release locks before calling SendMovesStats to avoid deadlock potential
-      // Use RAII idiom by creating a smaller scope for locks if needed,
-      // or simply let the lock guards go out of scope if possible.
-      // Here, we release and will re-acquire if necessary after SendMovesStats.
-      counters_lock.unlock(); // Manual unlock (use std::unique_lock if possible)
-      nodes_lock.unlock();   // Manual unlock
+      // Since SendMovesStats now acquires nodes_mutex_ internally, we only need to release locks here.
+      counters_lock.unlock(); // Use std::unique_lock if RAII unlock/relock is preferred
+      nodes_lock.unlock();
 
-      SendMovesStats(); // Now acquires locks internally if needed
+      SendMovesStats(best_move_copy); // Call the corrected function with the necessary argument
 
       // Reacquire locks *before* modifying shared state or calling functions needing them
       nodes_lock.lock();
@@ -2377,9 +2376,9 @@ void SearchWorker::PickNodesToExtendTask(
                 }
 
                 // Apply root move filter
-                if (is_root_node && !root_move_filter.empty() &&
+                if (is_root_node && !root_move_filter.empty() &&         // Corrected variable name
                     std::find(root_move_filter.begin(), root_move_filter.end(),
-                            cur_iters[idx].GetMove()) == root_move_filter_.end()) {
+                            cur_iters[idx].GetMove()) == root_move_filter.end()) {
                    continue;
                 }
 
