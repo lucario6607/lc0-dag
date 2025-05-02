@@ -28,7 +28,6 @@
 #include "mcts/search.h"
 
 #include <algorithm>
-#include <vector>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -36,17 +35,16 @@
 #include <iostream>
 #include <iterator>
 #include <memory>
+#include <numeric> // Added for std::iota
 #include <sstream>
 #include <thread>
-#include <numeric> // Added for std::iota
+#include <vector> // Added for std::vector
 
 #include "mcts/node.h"
 #include "utils/fastmath.h"
 #include "utils/random.h"
 #include "utils/spinhelper.h"
 
-// Added for std::iota which was missing include
-#include <numeric>
 #include <cstddef> // Added for size_t
 
 namespace lczero {
@@ -168,7 +166,7 @@ Search::Search(NodeTree* dag, Network* network,
       dag_(dag),
       syzygy_tb_(syzygy_tb),
       played_history_(dag->GetPositionHistory()),
-      network_(network), // Initialized before params_ due to -Wreorder warning
+      network_(network),
       params_(options), // Initialize params_ member
       searchmoves_(searchmoves),
       start_time_(start_time),
@@ -236,15 +234,26 @@ void ApplyDirichletNoise(Node* node, float eps, double alpha) {
 
  // Updates the root beam: calculates the top N moves and stores their indices.
 void Search::UpdateRootBeam(Node* root_node) REQUIRES(nodes_mutex_) {
-    if (!root_node || params_.GetRootBeamWidth() <= 0) {
-        root_beam_active_ = false;
+    // Ensure params_ is initialized before accessing GetRootBeamWidth()
+    if (!root_node || !root_node->HasChildren() || params_.GetRootBeamWidth() <= 0) {
         root_beam_indices_.clear();
+        root_beam_active_ = false; // Ensure beam is inactive if conditions not met
         return;
     }
 
     const int beam_width = params_.GetRootBeamWidth();
+    const int num_children = root_node->GetNumEdges(); // Use GetNumEdges as it reflects potential children
+
+    if (num_children <= beam_width) {
+        // Beam is wider than or equal to number of children, no restriction needed
+        root_beam_indices_.clear(); // Signal no restriction
+        root_beam_active_ = false; // Keep inactive if no restriction needed
+        return;
+    }
+
     // Change storage type to hold the calculated score (float) and index
     std::vector<std::pair<float, int>> scored_indices;
+    scored_indices.reserve(num_children);
 
     int idx = 0;
     for (const auto& edge : root_node->Edges()) {
@@ -276,7 +285,7 @@ void Search::UpdateRootBeam(Node* root_node) REQUIRES(nodes_mutex_) {
     }
     std::sort(root_beam_indices_.begin(), root_beam_indices_.end()); // Sort indices for efficient lookup later
 
-    root_beam_active_ = true;
+    root_beam_active_ = true; // Activate the beam
     // Initialize effective width to target width when activating
     current_effective_beam_width_ = beam_width;
     last_beam_width_step_visits_ = root_node->GetN(); // Reset step timer
@@ -370,7 +379,7 @@ void Search::CheckAndUpdateRootBeam() {
             current_effective_beam_width_ > target_beam_width_ && // Still greater than target?
             current_root_visits >= last_beam_width_step_visits_ + static_cast<uint64_t>(step_visits))
         {
-            current_effective_beam_width_ = std::max(target_beam_width_, current_effective_beam_width_ - 1); // Decrease width, clamp at target
+            current_effective_beam_width_ = std::max(target_beam_width_, current_effective_beam_width_ - 1); // Decrease width by 1, clamp at target
             last_beam_width_step_visits_ = current_root_visits; // Update visit count for the step
             LOGFILE << "Beam width stepped down to: " << current_effective_beam_width_;
         }
@@ -1033,8 +1042,8 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
   // Now check if we should act on the stop signal
   bool stop_already_fired = stop_.load(std::memory_order_acquire);
   if (should_stop_now || stop_already_fired) {
-      // Need locks again to check/modify shared state and send info
-      std::unique_lock<SharedMutex> nodes_lock(nodes_mutex_); // Use unique_lock for potential unlock
+      // Use unique_lock for potential scoped unlock/relock
+      std::unique_lock<SharedMutex> nodes_lock(nodes_mutex_);
       std::unique_lock<Mutex> counters_lock(counters_mutex_);
 
       if (ok_to_respond_bestmove_ && !bestmove_is_sent_) {
@@ -1046,13 +1055,13 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
           Move ponder_move_copy = final_pondermove_;
 
           // Release locks before calling SendMovesStats to avoid deadlock potential
+          // Using unique_lock's RAII unlock/relock mechanism
           counters_lock.unlock();
           nodes_lock.unlock();
 
           SendMovesStats(best_move_copy); // Call the corrected function with the necessary argument
 
-          // SendMovesStats finished, we can continue without re-acquiring locks for remaining actions here
-
+          // Actions after SendMovesStats that don't need locks immediately
           BestMoveInfo info(best_move_copy, ponder_move_copy); // Use copies
           uci_responder_->OutputBestMove(&info);
           stopper_->OnSearchDone(stats); // This likely doesn't need locks, but verify if changed
@@ -1062,7 +1071,7 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
           counters_lock.lock();
           bestmove_is_sent_ = true; // Requires counters_mutex_
           current_best_edge_ = EdgeAndNode(); // Requires nodes_mutex_
-          // Let unique_locks release automatically at scope end
+          // unique_locks will re-lock if needed, and unlock on scope exit
       }
 
      // If *this* function call decided to stop, fire the internal signal
@@ -1074,6 +1083,7 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
          return; // Exit after firing stop
      }
   }
+  // Locks released automatically by RAII guards if function exits here
 }
 
 
