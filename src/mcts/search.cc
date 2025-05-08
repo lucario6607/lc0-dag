@@ -300,80 +300,75 @@ void Search::UpdateRootBeam(Node* root_node) REQUIRES(nodes_mutex_) {
 
 // Checks if the root beam needs updating based on visit count and interval factor.
 // Also handles the gradual stepping down of the beam width.
+// Assumes nodes_mutex_ is held by the caller.
 void Search::CheckAndUpdateRootBeam() {
     // Check if beam functionality is enabled at all
     if (params_.GetRootBeamWidth() <= 0) {
+        root_beam_active_ = false; // Ensure inactive
+        root_beam_indices_.clear(); // Clear indices
         return; // Beam search disabled
     }
 
     bool needs_update = false;
-    uint32_t current_root_visits = 0; // Use uint32_t consistent with Node::GetN
-    uint64_t next_update_threshold = 0; // Use uint64_t for comparison consistency
-    int64_t current_interval = 0; // Interval used for this check
+    uint32_t current_root_visits = 0; 
+    uint64_t next_update_threshold = 0; 
+    int64_t current_interval = 0; 
 
     // --- Check for Update Trigger ---
-    { // Scope for read lock
-        SharedMutex::SharedLock read_lock(nodes_mutex_);
-        // Check if root_node_ is valid before accessing
-        if (!root_node_) return;
-        current_root_visits = root_node_->GetN();
-        const float interval_factor = 1.5f; // Example fixed factor, could be made a param
-        const uint64_t initial_threshold = static_cast<uint64_t>(params_.GetRootBeamUpdateThreshold());
+    // nodes_mutex_ is assumed to be held by the caller (e.g., PickNodesToExtend)
+    if (!root_node_) return;
+    current_root_visits = root_node_->GetN();
+    const float interval_factor = 1.5f; 
+    const uint64_t initial_threshold = static_cast<uint64_t>(params_.GetRootBeamUpdateThreshold());
 
-        if (!root_beam_active_) {
-             // Initial activation check
-             next_update_threshold = initial_threshold;
-             current_interval = initial_threshold; // Use initial threshold as first interval
-             needs_update = current_root_visits >= next_update_threshold;
-         } else if (interval_factor >= 1.0f) { // Geometric or Fixed interval enabled
-             if (last_root_beam_interval_used_ <= 0) { // Safety/Initialization if active but interval wasn't set
-                 current_interval = initial_threshold; // Default to initial threshold
-             } else {
-                 current_interval = static_cast<int64_t>(last_root_beam_interval_used_ * interval_factor);
-                 // Ensure interval is at least 1 visit to prevent potential infinite loops with factor ~1.0
-                 current_interval = std::max(static_cast<int64_t>(1), current_interval);
-             }
-             next_update_threshold = last_root_beam_update_visits_ + static_cast<uint64_t>(current_interval);
-             needs_update = current_root_visits >= next_update_threshold;
+    if (!root_beam_active_) {
+         // Initial activation check
+         next_update_threshold = initial_threshold;
+         current_interval = initial_threshold; // Use initial threshold as first interval
+         needs_update = current_root_visits >= next_update_threshold;
+     } else if (interval_factor >= 1.0f) { // Geometric or Fixed interval enabled
+         if (last_root_beam_interval_used_ <= 0) { // Safety/Initialization if active but interval wasn't set
+             current_interval = initial_threshold; // Default to initial threshold
+         } else {
+             current_interval = static_cast<int64_t>(last_root_beam_interval_used_ * interval_factor);
+             // Ensure interval is at least 1 visit to prevent potential infinite loops with factor ~1.0
+             current_interval = std::max(static_cast<int64_t>(1), current_interval);
          }
-         // If interval_factor < 1.0, re-evaluation is disabled after first activation (no 'else' needed)
-    } // Read lock released here
+         next_update_threshold = last_root_beam_update_visits_ + static_cast<uint64_t>(current_interval);
+         needs_update = current_root_visits >= next_update_threshold;
+     }
+    // If interval_factor < 1.0, re-evaluation is disabled after first activation
 
     if (needs_update) {
-        SharedMutex::Lock write_lock(nodes_mutex_); // Use exclusive lock for update
-        // Re-get current visits and re-check condition under write lock to handle races
-        if (!root_node_) return; // Check again under lock
+        // nodes_mutex_ is assumed to be held by the caller
+        // Re-get current visits and re-check condition to handle races if another thread modified state
+        // (though usually this function itself is protected by an outer lock)
+        if (!root_node_) return; 
         current_root_visits = root_node_->GetN();
-        // Check if the update is still needed *and* hasn't happened yet since the read check
+        // Check if the update is still needed *and* hasn't happened yet since the initial check
         if (current_root_visits >= next_update_threshold && last_root_beam_update_visits_ < next_update_threshold) {
              UpdateRootBeam(root_node_); // Perform the update
              last_root_beam_update_visits_ = current_root_visits; // Record the visit count at update
              last_root_beam_interval_used_ = current_interval; // Record the interval that triggered this update
         }
-        // Write lock released automatically by RAII
     }
 
     // --- Width Step Down Logic (Executed regardless of whether an update happened) ---
-    // Note: Width step down parameters are currently hardcoded or missing.
-    // If they were added to SearchParams, they should be accessed via params_.
-    // const int step_visits = params_.GetRootBeamWidthStepVisits(); // Example if param existed
     const int step_visits = 1000; // Placeholder value, make this a parameter if needed
     bool step_check_needed = false;
-    { // Read lock scope
-        SharedMutex::SharedLock read_lock(nodes_mutex_);
-        if (!root_node_) return;
-        current_root_visits = root_node_->GetN(); // Re-get visits if needed
-        // Check conditions under read lock first
-        step_check_needed = root_beam_active_ && step_visits > 0 &&
-                            current_effective_beam_width_ > target_beam_width_ && // Ensure effective width > target
-                            current_root_visits >= last_beam_width_step_visits_ + static_cast<uint64_t>(step_visits);
-    } // Read lock released
+    // nodes_mutex_ is assumed to be held by the caller
+    if (!root_node_) return;
+    current_root_visits = root_node_->GetN(); // Re-get visits if needed
+    // Check conditions
+    step_check_needed = root_beam_active_ && step_visits > 0 &&
+                        current_effective_beam_width_ > target_beam_width_ && // Ensure effective width > target
+                        current_root_visits >= last_beam_width_step_visits_ + static_cast<uint64_t>(step_visits);
 
     if (step_check_needed) {
-        SharedMutex::Lock write_lock(nodes_mutex_); // Acquire write lock for modification
+        // nodes_mutex_ is assumed to be held by the caller
         if (!root_node_) return;
-        // Re-check conditions inside write lock to prevent race conditions
-        current_root_visits = root_node_->GetN(); // Re-get visits under write lock
+        // Re-check conditions to prevent race conditions if state changed
+        current_root_visits = root_node_->GetN(); 
         if (root_beam_active_ && step_visits > 0 &&
             current_effective_beam_width_ > target_beam_width_ && // Still greater than target?
             current_root_visits >= last_beam_width_step_visits_ + static_cast<uint64_t>(step_visits))
@@ -382,7 +377,6 @@ void Search::CheckAndUpdateRootBeam() {
             last_beam_width_step_visits_ = current_root_visits; // Update visit count for the step
             LOGFILE << "Beam width stepped down to: " << current_effective_beam_width_;
         }
-        // Write lock released automatically by RAII
     }
 }
 
@@ -1399,7 +1393,7 @@ void Search::PopulateCommonIterationStats(IterationStats* stats) {
   stats->mate_depth = std::numeric_limits<int>::max();
 
   // If root node hasn't finished first visit, none of this code is safe.
-  if (root_node_->GetN() > 0) {
+  if (root_node_ && root_node_->GetN() > 0) { // Added null check for root_node_
     const auto draw_score = GetDrawScore(true);
     const float fpu =
         GetFpu(params_, root_node_, /* is_root_node */ true, draw_score);
@@ -1761,7 +1755,9 @@ void SearchWorker::GatherMinibatch() {
   int cur_n = 0;
   {
     SharedMutex::Lock lock(search_->nodes_mutex_);
-    cur_n = search_->root_node_->GetN();
+    if (search_->root_node_) { // Null check before accessing GetN
+        cur_n = search_->root_node_->GetN();
+    }
   }
   // TODO: GetEstimatedRemainingPlayouts has already had smart pruning factor
   // applied, which doesn't clearly make sense to include here...
@@ -1977,7 +1973,7 @@ void SearchWorker::PickNodesToExtend(int collision_limit) {
   SharedMutex::Lock lock(search_->nodes_mutex_);
 
   // --- Root Beam Search: Check and update beam *after* acquiring lock ---
-  search_->CheckAndUpdateRootBeam();
+  search_->CheckAndUpdateRootBeam(); // This function now assumes nodes_mutex_ is held
   // --- End Root Beam Search Modification ---
 
   // Ensure root_node_ is valid before proceeding
@@ -2104,20 +2100,19 @@ void SearchWorker::PickNodesToExtendTask(
 
 
   // --- Root Beam Search: Use effective width if active ---
+  // nodes_mutex_ is assumed to be held by the caller (PickNodesToExtend)
   int effective_beam_width = 0;
   bool apply_beam_restriction = false;
   const std::vector<int>* allowed_indices = nullptr;
-  { // Lock scope for reading beam state
-       SharedMutex::SharedLock beam_lock(search_->nodes_mutex_);
-       if (node == search_->root_node_ && search_->IsRootBeamActive()) {
-           allowed_indices = &search_->GetRootBeamIndices();
-           effective_beam_width = search_->current_effective_beam_width_; // Get current effective width
-           if (allowed_indices && !allowed_indices->empty() && effective_beam_width > 0) {
-                apply_beam_restriction = true;
-           }
-       }
-   }
-   // --- End Root Beam Search ---
+  
+  if (node == search_->root_node_ && search_->IsRootBeamActive()) { // IsRootBeamActive() must be safe to call if lock is held
+      allowed_indices = &search_->GetRootBeamIndices(); // GetRootBeamIndices() must be safe
+      effective_beam_width = search_->current_effective_beam_width_; // current_effective_beam_width_ must be safe
+      if (allowed_indices && !allowed_indices->empty() && effective_beam_width > 0) {
+           apply_beam_restriction = true;
+      }
+  }
+  // --- End Root Beam Search ---
 
 
   constexpr int num_top = 8;
@@ -3190,7 +3185,7 @@ void SearchWorker::DoBackupUpdateSingleNode(
     // n. // Check n validity
     if (p == search_->root_node_ && n &&
         ((old_update_parent_bounds && n->IsTerminal()) ||
-         (n != search_->current_best_edge_.node() &&
+         (search_->current_best_edge_ && n != search_->current_best_edge_.node() && // Null check for current_best_edge_
           search_->current_best_edge_.GetWeight() <= n->GetWeight()))) {
       search_->current_best_edge_ =
           search_->GetBestChildNoTemperature(search_->root_node_, 0);
