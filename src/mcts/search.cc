@@ -38,7 +38,7 @@
 #include <numeric> // Added for std::iota
 #include <sstream>
 #include <thread>
-#include <vector> // Added for std::vector
+#include <vector>  // Added for std::vector
 
 #include "mcts/node.h"
 #include "utils/fastmath.h"
@@ -236,30 +236,33 @@ void ApplyDirichletNoise(Node* node, float eps, double alpha) {
 void Search::UpdateRootBeam(Node* root_node) REQUIRES(nodes_mutex_) {
     if (!root_node || !root_node->HasChildren() || params_.GetRootBeamWidth() <= 0) {
         root_beam_indices_.clear();
-        root_beam_active_ = false;
-        current_effective_beam_width_ = 0;
+        root_beam_active_ = false; // Ensure beam is inactive if conditions not met
+        current_effective_beam_width_ = 0; // Reset effective width
         return;
     }
 
-    const int max_k = params_.GetRootBeamWidth(); // Max possible width
+    const int max_k = params_.GetRootBeamWidth(); // MaxWidth from UCI option RootBeamWidth
     const int min_k = params_.GetRootBeamMinWidth();
     const float score_gap_factor = params_.GetRootBeamScoreGapFactor();
-    const int num_potential_children = root_node->GetNumEdges();
+    const int num_potential_children = root_node->GetNumEdges(); // Use GetNumEdges as it reflects potential children
 
     std::vector<std::pair<float, int>> scored_indices;
     scored_indices.reserve(num_potential_children);
 
     int idx = 0;
     for (const auto& edge : root_node->Edges()) {
+        // Exclude moves filtered by searchmoves or TB
         if (!root_move_filter_.empty() &&
             std::find(root_move_filter_.begin(), root_move_filter_.end(),
                       edge.GetMove()) == root_move_filter_.end()) {
             idx++;
             continue;
         }
+        // Calculate the sqrt(N) * P metric
         uint32_t n = edge.GetN();
         float p = edge.GetP();
         float score = (n == 0) ? p : (std::sqrt(static_cast<float>(n)) * p);
+
         scored_indices.push_back({score, idx});
         idx++;
     }
@@ -277,20 +280,19 @@ void Search::UpdateRootBeam(Node* root_node) REQUIRES(nodes_mutex_) {
     int dynamic_k = 0;
     if (!scored_indices.empty()) {
         float best_score = scored_indices[0].first;
-        float score_threshold = best_score * score_gap_factor;
-        if (best_score <= 0) { // Handle cases where best score is 0 or negative
-            score_threshold = -std::numeric_limits<float>::infinity();
-        }
+        // Handle best_score being zero or very small to avoid issues with factor multiplication
+        float score_threshold = (best_score > 1e-9f) ? (best_score * score_gap_factor) : -std::numeric_limits<float>::infinity();
 
-        for (const auto& p : scored_indices) {
-            if (p.first >= score_threshold) {
+
+        for (const auto& p_score_idx : scored_indices) {
+            if (p_score_idx.first >= score_threshold) {
                 dynamic_k++;
             } else {
-                break; // Scores are sorted
+                break; 
             }
         }
         dynamic_k = std::max(min_k, std::min(dynamic_k, max_k));
-        dynamic_k = std::min(dynamic_k, (int)scored_indices.size()); // Cannot be more than available moves
+        dynamic_k = std::min(dynamic_k, (int)scored_indices.size()); 
     }
 
 
@@ -304,7 +306,7 @@ void Search::UpdateRootBeam(Node* root_node) REQUIRES(nodes_mutex_) {
     root_beam_active_ = true;
     current_effective_beam_width_ = dynamic_k; // Set effective width to the dynamically calculated k
     target_beam_width_ = dynamic_k; // Target width is now also dynamic per update
-    last_beam_width_step_visits_ = root_node->GetN(); // Reset step timer if still using step-down
+    last_beam_width_step_visits_ = root_node->GetN(); 
 
     LOGFILE << "Root beam updated (sqrt(N)*P, dynamic_k=" << dynamic_k << "). MaxWidth: " << max_k
             << ", MinWidth: " << min_k << ", GapFactor: " << score_gap_factor
@@ -581,43 +583,44 @@ void Search::SendUciInfo() REQUIRES(nodes_mutex_) REQUIRES(counters_mutex_) {
 // Decides whether anything important changed in stats and new info should be
 // shown to a user.
 void Search::MaybeOutputInfo() {
-  Move best_move_copy_for_stats;
-  bool log_live_stats_flag = false;
-  bool warn_limit_flag = false;
+  Move best_move_copy; // Copy needed for SendMovesStats if logging is enabled
+  bool should_send_stats = false;
+  bool should_warn_limit = false;
 
   { // Scope for locks
-    SharedMutex::Lock nodes_lock(nodes_mutex_);
-    Mutex::Lock counters_lock(counters_mutex_);
+      SharedMutex::Lock nodes_lock(nodes_mutex_);
+      Mutex::Lock counters_lock(counters_mutex_);
 
-    if (!bestmove_is_sent_ && current_best_edge_ &&
-        (current_best_edge_.edge() != last_outputted_info_edge_ ||
-         last_outputted_uci_info_.depth !=
-             static_cast<int>(cum_depth_ /
-                              (total_playouts_ ? total_playouts_ : 1)) ||
-         last_outputted_uci_info_.seldepth != max_depth_ ||
-         last_outputted_uci_info_.time + kUciInfoMinimumFrequencyMs <
-             GetTimeSinceStart())) {
-      SendUciInfo(); // Requires both locks
-      if (params_.GetLogLiveStats()) {
-        log_live_stats_flag = true;
-        best_move_copy_for_stats = final_bestmove_; // Copy under lock
+      if (!bestmove_is_sent_ && current_best_edge_ &&
+          (current_best_edge_.edge() != last_outputted_info_edge_ ||
+           last_outputted_uci_info_.depth !=
+               static_cast<int>(cum_depth_ /
+                                (total_playouts_ ? total_playouts_ : 1)) ||
+           last_outputted_uci_info_.seldepth != max_depth_ ||
+           last_outputted_uci_info_.time + kUciInfoMinimumFrequencyMs <
+               GetTimeSinceStart()))
+      {
+          SendUciInfo(); // Requires both locks held
+          if (params_.GetLogLiveStats()) {
+              should_send_stats = true;
+              best_move_copy = final_bestmove_; // Copy while holding counters_lock
+          }
+          if (stop_.load(std::memory_order_acquire) && !ok_to_respond_bestmove_) {
+              should_warn_limit = true;
+          }
       }
-      if (stop_.load(std::memory_order_acquire) && !ok_to_respond_bestmove_) {
-        warn_limit_flag = true;
-      }
-    }
-  } // Locks released here
+  } // Locks released here by RAII guards
 
-  // Actions to be performed outside the main lock scope
-  if (log_live_stats_flag) {
-    SendMovesStats(best_move_copy_for_stats);
+  // Call functions requiring fewer locks outside the main scope
+  if (should_send_stats) {
+      SendMovesStats(best_move_copy); // Pass the needed info
   }
-  if (warn_limit_flag) {
-    std::vector<ThinkingInfo> info(1);
-    info.back().comment =
-        "WARNING: Search has reached limit and does not make any progress.";
-    uci_responder_->OutputThinkingInfo(&info);
-  }
+  if (should_warn_limit) {
+       std::vector<ThinkingInfo> info(1);
+       info.back().comment =
+           "WARNING: Search has reached limit and does not make any progress.";
+       uci_responder_->OutputThinkingInfo(&info);
+   }
 }
 
 
@@ -1048,56 +1051,49 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
     if (stopper_->ShouldStop(stats, hints)) {
       should_stop_now = true;
     }
-  } // temp_nodes_lock and temp_counters_lock released here
+  } // Release locks
 
+  // Now check if we should act on the stop signal
   if (should_stop_now || current_stop_state) {
-    // If we need to act (either stop now or it was already stopped)
-    if (ok_to_respond_bestmove_) {
-      Move best_move_to_send;
-      Move ponder_move_to_send;
-      bool is_bestmove_sent_already;
+    std::unique_lock<SharedMutex> nodes_lock(nodes_mutex_, std::defer_lock);
+    std::unique_lock<Mutex> counters_lock(counters_mutex_, std::defer_lock);
+    std::lock(nodes_lock, counters_lock); // Lock both together to maintain order
 
-      { // Scope for final_bestmove_ and bestmove_is_sent_
-        Mutex::Lock counters_lock(counters_mutex_);
-        is_bestmove_sent_already = bestmove_is_sent_;
-        if (!is_bestmove_sent_already) {
-           SharedMutex::Lock nodes_lock(nodes_mutex_); // Ensure nodes_mutex_ is held before EnsureBestMoveKnown
-           EnsureBestMoveKnown(); // Requires nodes_mutex_ & counters_mutex_
-           best_move_to_send = final_bestmove_;
-           ponder_move_to_send = final_pondermove_;
-        }
-      } // Release counters_lock and nodes_lock
+    if (ok_to_respond_bestmove_ && !bestmove_is_sent_) {
+        SendUciInfo(); // Requires both locks held
+        EnsureBestMoveKnown(); // Requires both locks held
 
-      if (!is_bestmove_sent_already) {
-        // SendUciInfo requires nodes_mutex_ & counters_mutex_.
-        // To avoid re-acquiring in complex ways, call it before modifying bestmove_is_sent_
-        // and ensure it uses a consistent view of search state.
-        // This might mean a slight delay in SendUciInfo reflecting the absolute latest state,
-        // but prioritizes deadlock avoidance.
-        {
-            SharedMutex::Lock nodes_lock(nodes_mutex_);
-            Mutex::Lock counters_lock(counters_mutex_);
-            SendUciInfo();
-        }
+        // Local copies needed before releasing locks
+        Move best_move_copy = final_bestmove_;
+        Move ponder_move_copy = final_pondermove_;
 
-        SendMovesStats(best_move_copy); // Pass the captured best move
+        // Release locks before calling SendMovesStats
+        counters_lock.unlock();
+        nodes_lock.unlock();
 
-        BestMoveInfo info(best_move_to_send, ponder_move_to_send);
+        SendMovesStats(best_move_copy); // Call the corrected function
+
+        // Actions after SendMovesStats that don't need locks immediately
+        BestMoveInfo info(best_move_copy, ponder_move_copy); // Use copies
         uci_responder_->OutputBestMove(&info);
-        stopper_->OnSearchDone(stats);
+        stopper_->OnSearchDone(stats); 
 
-        { // Re-acquire to modify shared state
-            Mutex::Lock counters_lock(counters_mutex_);
-            SharedMutex::Lock nodes_lock(nodes_mutex_);
-            bestmove_is_sent_ = true;
-            current_best_edge_ = EdgeAndNode();
-        }
-      }
+        // Reacquire locks *only* to modify shared state safely
+        nodes_lock.lock();
+        counters_lock.lock();
+        bestmove_is_sent_ = true; // Requires counters_mutex_
+        current_best_edge_ = EdgeAndNode(); // Requires nodes_mutex_
     }
-    // If *this* specific call to MaybeTriggerStop decided we should stop
-    if (should_stop_now && !current_stop_state) {
-        FireStopInternal(); // This only sets an atomic and notifies CV
-    }
+
+     // If *this* specific call to MaybeTriggerStop decided we should stop
+     if (should_stop_now && !stop_already_fired) {
+         // Release locks before notifying potentially waiting threads
+         if (counters_lock.owns_lock()) counters_lock.unlock();
+         if (nodes_lock.owns_lock()) nodes_lock.unlock();
+         FireStopInternal();
+         return; // Exit after firing stop
+     }
+     // If locks were re-acquired, unique_lock RAII will release them.
   }
 }
 
