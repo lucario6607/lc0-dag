@@ -288,11 +288,11 @@ void Search::UpdateRootBeam(Node* root_node) REQUIRES(nodes_mutex_) {
             if (p_score_idx.first >= score_threshold) {
                 dynamic_k++;
             } else {
-                break; 
+                break;
             }
         }
         dynamic_k = std::max(min_k, std::min(dynamic_k, max_k));
-        dynamic_k = std::min(dynamic_k, (int)scored_indices.size()); 
+        dynamic_k = std::min(dynamic_k, (int)scored_indices.size());
     }
 
 
@@ -305,8 +305,8 @@ void Search::UpdateRootBeam(Node* root_node) REQUIRES(nodes_mutex_) {
 
     root_beam_active_ = true;
     current_effective_beam_width_ = dynamic_k; // Set effective width to the dynamically calculated k
-    target_beam_width_ = dynamic_k; // Target width is now also dynamic per update
-    last_beam_width_step_visits_ = root_node->GetN(); 
+    target_beam_width_ = dynamic_k;           // Target width is now also dynamic per update
+    last_beam_width_step_visits_ = root_node->GetN();
 
     LOGFILE << "Root beam updated (sqrt(N)*P, dynamic_k=" << dynamic_k << "). MaxWidth: " << max_k
             << ", MinWidth: " << min_k << ", GapFactor: " << score_gap_factor
@@ -327,12 +327,12 @@ void Search::CheckAndUpdateRootBeam() {
     }
 
     bool needs_update = false;
-    uint32_t current_root_visits = 0; 
-    uint64_t next_update_threshold = 0; 
-    int64_t current_interval = 0; 
+    uint32_t current_root_visits = 0;
+    uint64_t next_update_threshold = 0;
+    int64_t current_interval = 0;
 
     // --- Check for Update Trigger ---
-    { 
+    {
         SharedMutex::SharedLock read_lock(nodes_mutex_);
         if (!root_node_) return;
         current_root_visits = root_node_->GetN();
@@ -341,11 +341,11 @@ void Search::CheckAndUpdateRootBeam() {
 
         if (!root_beam_active_) {
              next_update_threshold = initial_threshold;
-             current_interval = initial_threshold; 
+             current_interval = initial_threshold;
              needs_update = current_root_visits >= next_update_threshold;
-         } else if (interval_factor >= 1.0f) { 
-             if (last_root_beam_interval_used_ <= 0) { 
-                 current_interval = initial_threshold; 
+         } else if (interval_factor >= 1.0f) {
+             if (last_root_beam_interval_used_ <= 0) {
+                 current_interval = initial_threshold;
              } else {
                  current_interval = static_cast<int64_t>(last_root_beam_interval_used_ * interval_factor);
                  current_interval = std::max(static_cast<int64_t>(1), current_interval);
@@ -353,33 +353,27 @@ void Search::CheckAndUpdateRootBeam() {
              next_update_threshold = last_root_beam_update_visits_ + static_cast<uint64_t>(current_interval);
              needs_update = current_root_visits >= next_update_threshold;
          }
-    } 
+    }
 
     if (needs_update) {
-        SharedMutex::Lock write_lock(nodes_mutex_); 
-        if (!root_node_) return; 
+        SharedMutex::Lock write_lock(nodes_mutex_);
+        if (!root_node_) return;
         current_root_visits = root_node_->GetN();
         if (current_root_visits >= next_update_threshold && last_root_beam_update_visits_ < next_update_threshold) {
-             UpdateRootBeam(root_node_); 
-             last_root_beam_update_visits_ = current_root_visits; 
-             last_root_beam_interval_used_ = current_interval; 
+             UpdateRootBeam(root_node_);
+             last_root_beam_update_visits_ = current_root_visits;
+             last_root_beam_interval_used_ = current_interval;
         }
     }
 
     // --- Width Step Down Logic ---
-    // This logic can be removed or modified if dynamic width from UpdateRootBeam is sufficient.
-    // For now, let's keep it but it will mostly interact with `target_beam_width_` which is now also dynamic.
     // const int step_visits = params_.GetRootBeamWidthStepVisits(); // Needs to be made a param
     const int step_visits = 1000; // Placeholder
     bool step_check_needed = false;
     {
         SharedMutex::SharedLock read_lock(nodes_mutex_);
         if (!root_node_) return;
-        current_root_visits = root_node_->GetN(); 
-        // The effective width is now set by UpdateRootBeam.
-        // The step-down logic might conflict or be redundant if dynamic width is aggressive enough.
-        // Consider if target_beam_width_ should be static (RootBeamWidth) or dynamic (the last calculated k).
-        // For now, let's assume target_beam_width_ is the MINIMUM we want, set by RootBeamMinWidth.
+        current_root_visits = root_node_->GetN();
         step_check_needed = root_beam_active_ && step_visits > 0 &&
                             current_effective_beam_width_ > params_.GetRootBeamMinWidth() && // Step down towards MinWidth
                             current_root_visits >= last_beam_width_step_visits_ + static_cast<uint64_t>(step_visits);
@@ -388,12 +382,11 @@ void Search::CheckAndUpdateRootBeam() {
     if (step_check_needed) {
         SharedMutex::Lock write_lock(nodes_mutex_);
         if (!root_node_) return;
-        current_root_visits = root_node_->GetN(); 
+        current_root_visits = root_node_->GetN();
         if (root_beam_active_ && step_visits > 0 &&
             current_effective_beam_width_ > params_.GetRootBeamMinWidth() &&
             current_root_visits >= last_beam_width_step_visits_ + static_cast<uint64_t>(step_visits))
         {
-            // Decrease by 1, but don't go below RootBeamMinWidth
             current_effective_beam_width_ = std::max(params_.GetRootBeamMinWidth(), current_effective_beam_width_ - 1);
             last_beam_width_step_visits_ = current_root_visits;
             LOGFILE << "Beam width stepped down to: " << current_effective_beam_width_;
@@ -1051,12 +1044,13 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
     if (stopper_->ShouldStop(stats, hints)) {
       should_stop_now = true;
     }
-  } // Release locks
+  } // temp_nodes_lock and temp_counters_lock released here
 
   // Now check if we should act on the stop signal
   if (should_stop_now || current_stop_state) {
-    std::unique_lock<SharedMutex> nodes_lock(nodes_mutex_, std::defer_lock);
-    std::unique_lock<Mutex> counters_lock(counters_mutex_, std::defer_lock);
+    // Use unique_lock for potential scoped unlock/relock
+    std::unique_lock<SharedMutex> nodes_lock(nodes_mutex_, std::defer_lock_t{});
+    std::unique_lock<Mutex> counters_lock(counters_mutex_, std::defer_lock_t{});
     std::lock(nodes_lock, counters_lock); // Lock both together to maintain order
 
     if (ok_to_respond_bestmove_ && !bestmove_is_sent_) {
@@ -1064,17 +1058,17 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
         EnsureBestMoveKnown(); // Requires both locks held
 
         // Local copies needed before releasing locks
-        Move best_move_copy = final_bestmove_;
-        Move ponder_move_copy = final_pondermove_;
+        Move best_move_to_send = final_bestmove_; // Corrected variable name
+        Move ponder_move_to_send = final_pondermove_;
 
         // Release locks before calling SendMovesStats
         counters_lock.unlock();
         nodes_lock.unlock();
 
-        SendMovesStats(best_move_copy); // Call the corrected function
+        SendMovesStats(best_move_to_send); // Use the corrected variable name
 
         // Actions after SendMovesStats that don't need locks immediately
-        BestMoveInfo info(best_move_copy, ponder_move_copy); // Use copies
+        BestMoveInfo info(best_move_to_send, ponder_move_to_send); // Use copies
         uci_responder_->OutputBestMove(&info);
         stopper_->OnSearchDone(stats); 
 
@@ -1083,10 +1077,11 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
         counters_lock.lock();
         bestmove_is_sent_ = true; // Requires counters_mutex_
         current_best_edge_ = EdgeAndNode(); // Requires nodes_mutex_
+        // unique_locks will re-lock if needed, and unlock on scope exit
     }
 
      // If *this* specific call to MaybeTriggerStop decided we should stop
-     if (should_stop_now && !stop_already_fired) {
+     if (should_stop_now && !current_stop_state) { // Use current_stop_state
          // Release locks before notifying potentially waiting threads
          if (counters_lock.owns_lock()) counters_lock.unlock();
          if (nodes_lock.owns_lock()) nodes_lock.unlock();
@@ -2144,7 +2139,7 @@ void SearchWorker::PickNodesToExtendTask(
   bool is_root_node = node == search_->root_node_;
   const float even_draw_score = search_->GetDrawScore(false);
   const float odd_draw_score = search_->GetDrawScore(true);
-  const auto& root_move_filter = search_->root_move_filter_; // Corrected typo: was search_->root_move_filter
+  const auto& root_move_filter = search_->root_move_filter_; // Corrected variable name
   auto m_evaluator = moves_left_support_ ? MEvaluator(params_) : MEvaluator();
 
   int max_limit = std::numeric_limits<int>::max();
