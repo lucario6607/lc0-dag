@@ -37,11 +37,6 @@ enum class ContemptMode { PLAY, WHITE, BLACK, NONE };
 
 class SearchParams {
  public:
-  // --- START ROOT BEAM SEARCH RELATED GETTERS (REMOVED OBSOLETE ONES) ---
-  // Removed GetRootBeamMaxWidth, GetRootBeamUpdateIntervalFactor, GetRootBeamWidthStepVisits
-  // as their OptionIds and corresponding logic were removed or incomplete.
-  // --- END ROOT BEAM SEARCH RELATED GETTERS ---
-
   SearchParams(const OptionsDict& options);
   SearchParams(const SearchParams&) = delete;
 
@@ -218,8 +213,10 @@ class SearchParams {
   float GetCorrectionHistoryLambda() const { return kCorrectionHistoryLambda; }
 
   // --- Root Beam Search Getters for cached values ---
-  int GetRootBeamWidth() const { return kRootBeamWidth; }
+  int GetRootBeamWidth() const { return kRootBeamWidth; } // Serves as MaxWidth if RootBeamMaxWidth is not set
   int GetRootBeamUpdateThreshold() const { return kRootBeamUpdateThreshold; }
+  int GetRootBeamMinWidth() const { return kRootBeamMinWidth; }
+  float GetRootBeamScoreGapFactor() const { return kRootBeamScoreGapFactor; }
   // --- END Root Beam Search Getters ---
 
   // Search parameter IDs.
@@ -326,18 +323,18 @@ class SearchParams {
   static const OptionId kCorrectionHistoryAlphaId;
   static const OptionId kCorrectionHistoryLambdaId;
 
-  // --- Root Beam Search ADDED ---
-  static const OptionId kRootBeamWidthId;
+  // --- Root Beam Search IDs ---
+  static const OptionId kRootBeamWidthId; // MaxWidth (effectively)
   static const OptionId kRootBeamUpdateThresholdId;
-  // --- END Root Beam Search ADDED ---
+  static const OptionId kRootBeamMinWidthId;
+  static const OptionId kRootBeamScoreGapFactorId;
+  // --- END Root Beam Search IDs ---
 
  private:
   const OptionsDict& options_;
   // Cached parameter values. Values have to be cached if either:
   // 1. Parameter is accessed often and has to be cached for performance reasons.
   // 2. Parameter has to stay the same during the search.
-  // TODO(crem) Some of those parameters can be converted to be dynamic after trivial search optimizations.
-  // --- Reordered members to potentially fix -Wreorder warnings ---
   // --- Standard Search Params ---
   const float kCpuct;
   const float kCpuctAtRoot;
@@ -423,8 +420,10 @@ class SearchParams {
   const float kCorrectionHistoryAlpha;
   const float kCorrectionHistoryLambda;
   // --- Root Beam Search Cached Members ---
-  const int kRootBeamWidth;
+  const int kRootBeamWidth; // Effectively MaxWidth for dynamic width
   const int kRootBeamUpdateThreshold;
+  const int kRootBeamMinWidth;
+  const float kRootBeamScoreGapFactor;
   // --- END Root Beam Search Cached Members ---
 };
 
