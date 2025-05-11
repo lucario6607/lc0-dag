@@ -556,15 +556,21 @@ const OptionId SearchParams::kCorrectionHistoryLambdaId{
     "correction-history-lambda", "CorrectionHistoryLambda",
     "Strength of correction history adjustment. [0,1]"};
 
-// --- Root Beam Search ADDED ---
+// --- Root Beam Search IDs ---
 const OptionId SearchParams::kRootBeamWidthId{
     "root-beam-width", "RootBeamWidth",
-    "If > 0, restricts search to the top N most visited root moves after an initial threshold. 0 disables."};
+    "Target/Max width for the root beam. If 0, beam search is disabled. If > 0, enables dynamic beam width based on score gap, bounded by MinWidth and this value."};
 const OptionId SearchParams::kRootBeamUpdateThresholdId{
     "root-beam-update-threshold", "RootBeamUpdateThreshold",
-    "Number of root visits after which the root beam is calculated and activated."};
-// --- END Root Beam Search ADDED ---
-
+    "Number of root visits after which the root beam is initially calculated and activated."};
+const OptionId SearchParams::kRootBeamMinWidthId{
+    "root-beam-min-width", "RootBeamMinWidth",
+    "Minimum number of moves to keep in the root beam, even if score gaps are large."};
+const OptionId SearchParams::kRootBeamScoreGapFactorId{
+    "root-beam-score-gap-factor", "RootBeamScoreGapFactor",
+    "Factor (0.0-1.0) applied to the best move's score. Moves scoring below (best_score * factor) are pruned. Higher value = narrower beam."};
+// --- END Root Beam Search IDs ---
+	
 
 void SearchParams::Populate(OptionsParser* options) {
   // Here the uci optimized defaults" are set.
@@ -708,8 +714,10 @@ void SearchParams::Populate(OptionsParser* options) {
   options->Add<FloatOption>(kCorrectionHistoryLambdaId, 0, 1) = 0.3;
 
   // --- Root Beam Search Options ---
-  options->Add<IntOption>(kRootBeamWidthId, 0, 500) = 0; // Disabled by default
-  options->Add<IntOption>(kRootBeamUpdateThresholdId, 0, 1000000) = 100; // Default threshold
+  options->Add<IntOption>(kRootBeamWidthId, 0, 500) = 0; // Disabled by default, serves as MaxWidth if dynamic
+  options->Add<IntOption>(kRootBeamUpdateThresholdId, 0, 1000000) = 100;
+  options->Add<IntOption>(kRootBeamMinWidthId, 1, 500) = 3; // Default min width for dynamic beam
+  options->Add<FloatOption>(kRootBeamScoreGapFactorId, 0.0f, 1.0f) = 0.9f; // Higher = narrower beam faster
 
   options->Add<BoolOption>(kSearchSpinBackoffId) = false;
 
@@ -734,10 +742,8 @@ void SearchParams::Populate(OptionsParser* options) {
   options->HideOption(kWDLContemptAttenuationId);
   options->HideOption(kWDLDrawRateTargetId);
   options->HideOption(kWDLBookExitBiasId);
-  // --- Root Beam Search - UNCOMMENT/REMOVE HideOption TO MAKE VISIBLE IN UCI ---
-  // options->HideOption(kRootBeamWidthId);
-  // options->HideOption(kRootBeamUpdateThresholdId);
-  // --- END Root Beam Search ---
+  // options->HideOption(kRootBeamMinWidthId); // Optionally show/hide
+  // options->HideOption(kRootBeamScoreGapFactorId); // Optionally show/hide
 }
 
 SearchParams::SearchParams(const OptionsDict& options)
@@ -869,7 +875,9 @@ SearchParams::SearchParams(const OptionsDict& options)
       kCorrectionHistoryLambda(options.Get<float>(kCorrectionHistoryLambdaId)),
       // --- Root Beam Search Cached Members ---
       kRootBeamWidth(options.Get<int>(kRootBeamWidthId)),
-      kRootBeamUpdateThreshold(options.Get<int>(kRootBeamUpdateThresholdId))
+      kRootBeamUpdateThreshold(options.Get<int>(kRootBeamUpdateThresholdId)),
+      kRootBeamMinWidth(options.Get<int>(kRootBeamMinWidthId)),
+      kRootBeamScoreGapFactor(options.Get<float>(kRootBeamScoreGapFactorId))
       // --- END Root Beam Search Cached Members ---
       {}
 
