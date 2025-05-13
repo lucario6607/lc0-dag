@@ -1032,56 +1032,53 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
     hints->UpdateEstimatedNps(params_.GetNpsLimit());
   }
 
-  bool should_stop_now = false;
+  bool should_stop_now = false; 
   bool current_stop_state = stop_.load(std::memory_order_acquire);
 
   if (!current_stop_state) {
-    // Temporarily acquire locks for ShouldStop - use RAII for safety
-    // Ensure nodes_mutex_ is acquired before counters_mutex_
     SharedMutex::Lock temp_nodes_lock(nodes_mutex_);
     Mutex::Lock temp_counters_lock(counters_mutex_);
     if (stopper_->ShouldStop(stats, hints)) {
       should_stop_now = true;
     }
-  } // temp_nodes_lock and temp_counters_lock released here
+  } 
 
   if (should_stop_now || current_stop_state) {
     Move best_move_to_send;
     Move ponder_move_to_send;
     bool do_respond_actions = false;
-    bool log_live_stats_active = false;
+    bool log_live_stats_active_copy = false; // Copy for use outside lock
 
     { // Scope for acquiring both locks and reading/modifying shared state
       SharedMutex::Lock nodes_lock(nodes_mutex_);
       Mutex::Lock counters_lock(counters_mutex_);
 
       if (ok_to_respond_bestmove_ && !bestmove_is_sent_) {
-        SendUciInfo(); // Requires both locks
-        EnsureBestMoveKnown(); // Requires both locks
-
+        SendUciInfo(); 
+        EnsureBestMoveKnown(); 
         best_move_to_send = final_bestmove_;
         ponder_move_to_send = final_pondermove_;
         do_respond_actions = true;
-        log_live_stats_active = params_.GetLogLiveStats(); // Read under lock
+        log_live_stats_active_copy = params_.GetLogLiveStats();
 
         bestmove_is_sent_ = true;
         current_best_edge_ = EdgeAndNode();
       }
     } // Release nodes_lock and counters_lock
 
-    // Perform actions that don't require the locks or can use copied data
     if (do_respond_actions) {
-      if (log_live_stats_active) {
-        SendMovesStats(best_move_to_send); // Pass the copied best move
+      if (log_live_stats_active_copy) {
+          SendMovesStats(best_move_to_send);
       }
       BestMoveInfo info(best_move_to_send, ponder_move_to_send);
       uci_responder_->OutputBestMove(&info);
       stopper_->OnSearchDone(stats);
     }
 
-    if (should_stop_now && !current_stop_state) {
-      FireStopInternal(); // This only sets an atomic and notifies CV, safe to call without locks
-    }
+     if (should_stop_now && !current_stop_state) {
+         FireStopInternal(); 
+         return; 
+     }
   }
 }
 
