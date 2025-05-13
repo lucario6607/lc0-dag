@@ -166,7 +166,7 @@ Search::Search(NodeTree* dag, Network* network,
       dag_(dag),
       syzygy_tb_(syzygy_tb),
       played_history_(dag->GetPositionHistory()),
-      network_(network),
+      network_(network), // Initialized before params_ due to -Wreorder warning
       params_(options), // Initialize params_ member
       searchmoves_(searchmoves),
       start_time_(start_time),
@@ -1037,6 +1037,7 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
 
   if (!current_stop_state) {
     // Temporarily acquire locks for ShouldStop - use RAII for safety
+    // Ensure nodes_mutex_ is acquired before counters_mutex_
     SharedMutex::Lock temp_nodes_lock(nodes_mutex_);
     Mutex::Lock temp_counters_lock(counters_mutex_);
     if (stopper_->ShouldStop(stats, hints)) {
@@ -1045,35 +1046,41 @@ void Search::MaybeTriggerStop(const IterationStats& stats,
   } // temp_nodes_lock and temp_counters_lock released here
 
   if (should_stop_now || current_stop_state) {
-    // Data needed for actions outside the lock
-    Move best_move_to_send_copy;
-    Move ponder_move_to_send_copy;
+    Move best_move_to_send;
+    Move ponder_move_to_send;
     bool do_respond_actions = false;
+    bool log_live_stats_active = false;
 
-    { // Scope for acquiring both locks
+    { // Scope for acquiring both locks and reading/modifying shared state
       SharedMutex::Lock nodes_lock(nodes_mutex_);
       Mutex::Lock counters_lock(counters_mutex_);
 
       if (ok_to_respond_bestmove_ && !bestmove_is_sent_) {
-        SendUciInfo();
-        EnsureBestMoveKnown();
-        best_move_to_send_copy = final_bestmove_;
-        ponder_move_to_send_copy = final_pondermove_;
+        SendUciInfo(); // Requires both locks
+        EnsureBestMoveKnown(); // Requires both locks
+
+        best_move_to_send = final_bestmove_;
+        ponder_move_to_send = final_pondermove_;
         do_respond_actions = true;
+        log_live_stats_active = params_.GetLogLiveStats(); // Read under lock
+
         bestmove_is_sent_ = true;
         current_best_edge_ = EdgeAndNode();
       }
     } // Release nodes_lock and counters_lock
 
+    // Perform actions that don't require the locks or can use copied data
     if (do_respond_actions) {
-      SendMovesStats(best_move_to_send_copy);
-      BestMoveInfo info(best_move_to_send_copy, ponder_move_to_send_copy);
+      if (log_live_stats_active) {
+        SendMovesStats(best_move_to_send); // Pass the copied best move
+      }
+      BestMoveInfo info(best_move_to_send, ponder_move_to_send);
       uci_responder_->OutputBestMove(&info);
       stopper_->OnSearchDone(stats);
     }
 
     if (should_stop_now && !current_stop_state) {
-      FireStopInternal();
+      FireStopInternal(); // This only sets an atomic and notifies CV, safe to call without locks
     }
   }
 }
@@ -2125,7 +2132,7 @@ void SearchWorker::PickNodesToExtendTask(
   bool is_root_node = node == search_->root_node_;
   const float even_draw_score = search_->GetDrawScore(false);
   const float odd_draw_score = search_->GetDrawScore(true);
-  const auto& root_move_filter = search_->root_move_filter_; // Corrected typo: was search_->root_move_filter
+  const auto& root_move_filter = search_->root_move_filter_; // Corrected variable name
   auto m_evaluator = moves_left_support_ ? MEvaluator(params_) : MEvaluator();
 
   int max_limit = std::numeric_limits<int>::max();
